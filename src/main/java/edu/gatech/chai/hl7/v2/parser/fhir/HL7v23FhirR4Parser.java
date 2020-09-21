@@ -148,6 +148,13 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 					Identifier identifier = new Identifier();
 					identifier.setSystem("External_Patient_ID");
 					identifier.setValue(id.getValue());
+					
+					// Set the type to custom CMS type.
+					CodeableConcept typeCodeableConcept = new CodeableConcept();
+					Coding typeCoding = new Coding("urn:mdi:temporary:code", "1000007", "Case Number");
+					typeCodeableConcept.addCoding(typeCoding);
+					identifier.setType(typeCodeableConcept);
+					
 					patient.addIdentifier(identifier);
 				} else {
 					// PID2 is required for NMS outbound message.
