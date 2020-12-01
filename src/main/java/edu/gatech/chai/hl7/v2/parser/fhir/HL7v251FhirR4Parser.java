@@ -57,9 +57,9 @@ import ca.uhn.hl7v2.model.v251.segment.OBR;
 import ca.uhn.hl7v2.model.v251.segment.OBX;
 import ca.uhn.hl7v2.model.v251.segment.PID;
 
-public class HL7v251FhirR4Parser2 extends BaseHL7v2FHIRParser {
+public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 	// Logger setup
-	final static Logger LOGGER = Logger.getLogger(HL7v251FhirR4Parser2.class.getName());
+	final static Logger LOGGER = Logger.getLogger(HL7v251FhirR4Parser.class.getName());
 
 	MessageHeader messageHeader = null;
 
@@ -67,7 +67,7 @@ public class HL7v251FhirR4Parser2 extends BaseHL7v2FHIRParser {
 		mapMessageHeader((ORU_R01) msg);
 	}
 
-	public HL7v251FhirR4Parser2() {
+	public HL7v251FhirR4Parser() {
 	}
 
 	public List<IBaseBundle> executeParser(Message msg) {
