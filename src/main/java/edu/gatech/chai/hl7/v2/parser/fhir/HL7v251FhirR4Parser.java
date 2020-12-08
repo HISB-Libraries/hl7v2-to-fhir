@@ -34,7 +34,9 @@ import ca.uhn.hl7v2.HL7Exception;
 import ca.uhn.hl7v2.model.Message;
 import ca.uhn.hl7v2.model.Varies;
 import ca.uhn.hl7v2.model.v251.datatype.CE;
+import ca.uhn.hl7v2.model.v251.datatype.CWE;
 import ca.uhn.hl7v2.model.v251.datatype.CX;
+import ca.uhn.hl7v2.model.v251.datatype.DT;
 import ca.uhn.hl7v2.model.v251.datatype.FN;
 import ca.uhn.hl7v2.model.v251.datatype.FT;
 import ca.uhn.hl7v2.model.v251.datatype.HD;
@@ -42,6 +44,7 @@ import ca.uhn.hl7v2.model.v251.datatype.ID;
 import ca.uhn.hl7v2.model.v251.datatype.IS;
 import ca.uhn.hl7v2.model.v251.datatype.MSG;
 import ca.uhn.hl7v2.model.v251.datatype.NM;
+import ca.uhn.hl7v2.model.v251.datatype.SN;
 import ca.uhn.hl7v2.model.v251.datatype.ST;
 import ca.uhn.hl7v2.model.v251.datatype.TS;
 import ca.uhn.hl7v2.model.v251.datatype.TX;
@@ -56,6 +59,7 @@ import ca.uhn.hl7v2.model.v251.segment.NTE;
 import ca.uhn.hl7v2.model.v251.segment.OBR;
 import ca.uhn.hl7v2.model.v251.segment.OBX;
 import ca.uhn.hl7v2.model.v251.segment.PID;
+import edu.gatech.chai.hl7.v2.parser.fhir.utilities.V2FHIRCodeSystem;
 
 public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 	// Logger setup
@@ -327,6 +331,31 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 						}
 
 						observation.setValue(quantity);
+					} else if (valueType.getValue().equals("CWE")) { 
+						CWE cweValue = (CWE) observationValue.getData();
+						observation.setValue(getCodeableConceptFromCWE(cweValue));
+					} else if (valueType.getValue().equals("CE")) { 
+						CE ceValue = (CE) observationValue.getData();
+						observation.setValue(getCodeableConceptFromCE(ceValue));
+					} else if (valueType.getValue().equals("TS")) {
+						TS timeValue = (TS) observationValue.getData();
+						observation.setValue(new DateTimeType(timeValue.getTs1_Time().getValueAsDate()));
+					} else if (valueType.getValue().equals("SN")) {
+						SN snValue = (SN) observationValue.getData();
+						StringType valueString = new StringType (snValue.getSn1_Comparator().getValue() + snValue.getSn2_Num1().getValue() + snValue.getSn3_SeparatorSuffix().getValue() + snValue.getSn4_Num2().getValue());
+						observation.setValue(valueString);
+					} else if (valueType.getValue().equals("DT")) {
+						DT dtValue = (DT) observationValue.getData();
+						observation.setValue(new StringType(dtValue.getValue()));
+//						DateType fhirDateType = new DateType();
+//						if (dtValue != null && !dtValue.isEmpty()) {
+//							fhirDateType.setDay(dtValue.getDay());
+//							fhirDateType.setMonth(dtValue.getMonth());
+//							fhirDateType.setYear(dtValue.getYear());
+//							observation.setValue(fhirDateType);
+//						} else {
+//							observation.setValue(new StringType("DT Value Empty"));
+//						}
 					} else { // ST and TX - we treat both ST and TX as String
 						StringType valueString = null;
 						if (valueType.getValue().equals("ST")) {
@@ -475,7 +504,40 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 			}
 			ID system = codeElement.getCe3_NameOfCodingSystem();
 			if (system != null && !system.isEmpty()) {
-				coding.setSystem(system.getValue());
+				coding.setSystem(V2FHIRCodeSystem.getFhirFromV2(system.getValue()));
+			} else {
+				// Put facility name for the system if available.
+				// For now, we put NMS Labs if sending facility is NMS.
+				if (getSendingFacilityName().equalsIgnoreCase("NMS"))
+					coding.setSystem("NMS Labs");
+			}
+			if (!coding.isEmpty()) {
+				retVal.addCoding(coding);
+			}
+		} catch (HL7Exception e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+
+		return retVal;
+	}
+
+	private CodeableConcept getCodeableConceptFromCWE(CWE codedWithExceptions) {
+		CodeableConcept retVal = new CodeableConcept();
+
+		Coding coding = new Coding();
+		try {
+			ST id = codedWithExceptions.getCwe1_Identifier();
+			if (id != null && !id.isEmpty()) {
+				coding.setCode(id.getValue());
+			}
+			ST display = codedWithExceptions.getCwe2_Text();
+			if (display != null && !display.isEmpty()) {
+				coding.setDisplay(display.getValue());
+			}
+			ID system = codedWithExceptions.getCwe3_NameOfCodingSystem();
+			if (system != null && !system.isEmpty()) {
+				coding.setSystem(V2FHIRCodeSystem.getFhirFromV2(system.getValue()));
 			} else {
 				// Put facility name for the system if available.
 				// For now, we put NMS Labs if sending facility is NMS.
