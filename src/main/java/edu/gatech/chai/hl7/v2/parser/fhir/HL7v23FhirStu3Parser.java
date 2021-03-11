@@ -51,6 +51,7 @@ import ca.uhn.hl7v2.model.v23.segment.MSH;
 import ca.uhn.hl7v2.model.v23.segment.NTE;
 import ca.uhn.hl7v2.model.v23.segment.OBR;
 import ca.uhn.hl7v2.model.v23.segment.OBX;
+import edu.gatech.chai.hl7.v2.parser.fhir.utilities.V2FHIRCodeSystem;
 
 public class HL7v23FhirStu3Parser extends BaseHL7v2FHIRParser {
 	// Logger setup
@@ -470,7 +471,7 @@ public class HL7v23FhirStu3Parser extends BaseHL7v2FHIRParser {
 			}
 			ST system = codeElement.getCe3_NameOfCodingSystem();
 			if (system != null && !system.isEmpty()) {
-				coding.setSystem(system.getValue());
+				coding.setSystem(V2FHIRCodeSystem.getFhirFromV2(system.getValue()));
 			} else {
 				// Put facility name for the system if available.
 				// For now, we put NMS Labs if sending facility is NMS.
