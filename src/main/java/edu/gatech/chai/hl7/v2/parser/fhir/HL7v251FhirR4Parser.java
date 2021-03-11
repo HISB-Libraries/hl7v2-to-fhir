@@ -570,6 +570,26 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 		return retVal;
 	}
 
+	private Quantity setUnitQuantity (Quantity quantity, String system, String code, String unit) {
+		if (quantity == null) {
+			quantity = new Quantity();
+		}
+		
+		if (system != null && !system.isEmpty()) {
+			quantity.setSystem(V2FHIRCodeSystem.getFhirFromV2(system));
+		}
+		
+		if (unit != null && !unit.isEmpty()) {
+			quantity.setUnit(unit);
+		}
+		
+		if (code != null && !code.isEmpty()) {
+			quantity.setCode(code);
+		}
+		
+		return quantity;
+	}
+	
 	public List<Observation> mapObservations(ORU_R01_ORDER_OBSERVATION orderObservation, String subjectReference,
 			Bundle bundle) {
 		// HL7 Mapping Document:
@@ -641,13 +661,18 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 				String unitCodeString = new String();
 				String unitSystemString = new String();
 				if (!unit.isEmpty()) {
-					ST id = unit.getCe1_Identifier();
-					if (id != null && !id.isEmpty()) {
-						unitString = id.getValue().replace("mcg", "ug").replace(" Creat", "{creat}");
-						unitCodeString = id.getValue().replace("mcg", "ug").replace(" Creat", "{creat}");
+					ST code = unit.getCe1_Identifier();
+					ST unitText = unit.getCe2_Text();
+					ID system = unit.getCe3_NameOfCodingSystem();
+
+					if (code != null && !code.isEmpty()) {
+						unitCodeString = code.getValue().replace("mcg", "ug").replace(" Creat", "{creat}");
 					}
 
-					ID system = unit.getCe3_NameOfCodingSystem();
+					if (!unitText.isEmpty()) {
+						unitString = unitText.getValue().replace("mcg", "ug").replace(" Creat", "{creat}");
+					}
+					
 					if (system != null && !system.isEmpty()) {
 						unitSystemString = system.getValue();
 					}
@@ -671,14 +696,7 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 						quantity.setValue(Double.parseDouble(numericValue.getValue()));
 
 						// Set the unit if available from OBX-6
-						if (!unitString.isEmpty()) {
-							quantity.setUnit(unitString);
-							quantity.setCode(unitCodeString);
-						}
-						if (!unitSystemString.isEmpty()) {
-							quantity.setSystem(unitSystemString);
-						}
-
+						setUnitQuantity(quantity, unitSystemString, unitCodeString, unitString);
 						obsValue = quantity;
 					} else if (valueType.getValue().equals("CWE")) {
 						CWE cweValue = (CWE) observationValue.getData();
@@ -703,18 +721,23 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 
 						if (!sn1.isEmpty()) {
 							quantity1.setValue(Double.parseDouble(sn1.getValue()));
+							setUnitQuantity(quantity1, unitSystemString, unitCodeString, unitString);
 						}
 
 						if (!sn2.isEmpty()) {
 							quantity2.setValue(Double.parseDouble(sn2.getValue()));
+							setUnitQuantity(quantity2, unitSystemString, unitCodeString, unitString);
 						}
 
 						ST comparator = snValue.getComparator();
 						ST separatorSuffix = snValue.getSeparatorSuffix();
 
 						if (!comparator.isEmpty()) {
-							quantity1.setComparator(QuantityComparator.valueOf(comparator.getValue()));
-							quantity2.setComparator(QuantityComparator.valueOf(comparator.getValue()));
+							String comparatorStr = comparator.getValue();
+							if (!"=".equals(comparatorStr)) {
+								quantity1.setComparator(QuantityComparator.valueOf(comparator.getValue()));
+								quantity2.setComparator(QuantityComparator.valueOf(comparator.getValue()));
+							}
 						}
 						if (":".equals(separatorSuffix.getValue()) || "/".equals(separatorSuffix.getValue())) {
 							// valueRatio
