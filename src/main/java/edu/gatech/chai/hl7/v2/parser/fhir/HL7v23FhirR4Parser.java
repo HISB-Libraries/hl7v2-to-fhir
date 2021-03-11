@@ -9,33 +9,51 @@ import org.apache.log4j.Logger;
 import org.hl7.fhir.instance.model.api.IBaseBundle;
 import org.hl7.fhir.r4.model.Annotation;
 import org.hl7.fhir.r4.model.Bundle;
+import org.hl7.fhir.r4.model.CodeType;
 import org.hl7.fhir.r4.model.Bundle.BundleEntryComponent;
+import org.hl7.fhir.r4.model.DiagnosticReport.DiagnosticReportStatus;
 import org.hl7.fhir.r4.model.CodeableConcept;
 import org.hl7.fhir.r4.model.Coding;
 import org.hl7.fhir.r4.model.DateTimeType;
+import org.hl7.fhir.r4.model.DiagnosticReport;
+import org.hl7.fhir.r4.model.Extension;
 import org.hl7.fhir.r4.model.Enumerations.AdministrativeGender;
 import org.hl7.fhir.r4.model.Enumerations.MessageEvent;
+import org.hl7.fhir.r4.model.HumanName.NameUse;
 import org.hl7.fhir.r4.model.HumanName;
 import org.hl7.fhir.r4.model.Identifier;
 import org.hl7.fhir.r4.model.MessageHeader;
 import org.hl7.fhir.r4.model.MessageHeader.MessageDestinationComponent;
 import org.hl7.fhir.r4.model.MessageHeader.MessageSourceComponent;
 import org.hl7.fhir.r4.model.Observation;
+import org.hl7.fhir.r4.model.Observation.ObservationComponentComponent;
 import org.hl7.fhir.r4.model.Observation.ObservationReferenceRangeComponent;
 import org.hl7.fhir.r4.model.Observation.ObservationStatus;
+import org.hl7.fhir.r4.model.Quantity.QuantityComparator;
+import org.hl7.fhir.r4.model.ServiceRequest.ServiceRequestIntent;
+import org.hl7.fhir.r4.model.ServiceRequest.ServiceRequestStatus;
 import org.hl7.fhir.r4.model.codesystems.ObservationCategory;
 import org.hl7.fhir.r4.model.Patient;
+import org.hl7.fhir.r4.model.Period;
+import org.hl7.fhir.r4.model.Practitioner;
 import org.hl7.fhir.r4.model.Quantity;
+import org.hl7.fhir.r4.model.Range;
+import org.hl7.fhir.r4.model.Ratio;
 import org.hl7.fhir.r4.model.Reference;
+import org.hl7.fhir.r4.model.Resource;
+import org.hl7.fhir.r4.model.ServiceRequest;
 import org.hl7.fhir.r4.model.SimpleQuantity;
 import org.hl7.fhir.r4.model.StringType;
+import org.hl7.fhir.r4.model.Type;
 
 import ca.uhn.hl7v2.HL7Exception;
+import ca.uhn.hl7v2.model.DataTypeException;
 import ca.uhn.hl7v2.model.Message;
 import ca.uhn.hl7v2.model.Varies;
 import ca.uhn.hl7v2.model.v23.datatype.CE;
 import ca.uhn.hl7v2.model.v23.datatype.CM_MSG;
 import ca.uhn.hl7v2.model.v23.datatype.CX;
+import ca.uhn.hl7v2.model.v23.datatype.EI;
 import ca.uhn.hl7v2.model.v23.datatype.FT;
 import ca.uhn.hl7v2.model.v23.datatype.HD;
 import ca.uhn.hl7v2.model.v23.datatype.ID;
@@ -52,6 +70,11 @@ import ca.uhn.hl7v2.model.v23.segment.MSH;
 import ca.uhn.hl7v2.model.v23.segment.NTE;
 import ca.uhn.hl7v2.model.v23.segment.OBR;
 import ca.uhn.hl7v2.model.v23.segment.OBX;
+import ca.uhn.hl7v2.model.v23.datatype.DT;
+import ca.uhn.hl7v2.model.v23.datatype.SN;
+import ca.uhn.hl7v2.model.v23.datatype.DR;
+import ca.uhn.hl7v2.model.v23.datatype.CQ;
+import ca.uhn.hl7v2.model.v23.datatype.XCN;
 import edu.gatech.chai.hl7.v2.parser.fhir.utilities.V2FHIRCodeSystem;
 
 public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
@@ -67,6 +90,20 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 	public HL7v23FhirR4Parser() {
 	}
 
+	private Reference addToMessageBundle(Bundle bundle, Resource resource, String resourceFullUrl) {
+		Reference ret;
+
+		BundleEntryComponent bundleEntryPatient = new BundleEntryComponent();
+		bundleEntryPatient.setResource(resource);
+		bundleEntryPatient.setFullUrl(resourceFullUrl);
+
+		ret = new Reference(resourceFullUrl);
+		messageHeader.addFocus(ret);
+		bundle.addEntry(bundleEntryPatient);
+
+		return ret;
+	}
+
 	public List<IBaseBundle> executeParser(Message msg) {
 		ca.uhn.hl7v2.model.v23.message.ORU_R01 oruR01Message = (ca.uhn.hl7v2.model.v23.message.ORU_R01) msg;
 		List<IBaseBundle> bundles = new ArrayList<IBaseBundle>();
@@ -77,6 +114,10 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 
 		int numberOfResponses = oruR01Message.getRESPONSEReps();
 		for (int i = 0; i < numberOfResponses; i++) {
+			/*
+			 * Each PATIENT_RESULT generates one Message Bundle. This message bundle will be
+			 * sent or written separately.
+			 */
 			Bundle bundle = new Bundle();
 			bundle.setType(Bundle.BundleType.MESSAGE);
 
@@ -84,54 +125,74 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 			bundleEntryMessageHeader.setResource(messageHeader);
 			bundle.addEntry(bundleEntryMessageHeader);
 
-			List<Patient> returnedPatients = mapPatients(oruR01Message.getRESPONSE(i));
-			// v2.3 says that there should be 1 patient. This library reads as many.
-			// We just use first one if the returnedPatients is not empty.
+			ORU_R01_RESPONSE patientResult = oruR01Message.getRESPONSE(i);
+
+			subject = mapPatients(patientResult);
 			String patientReference = null;
-			if (returnedPatients.size() > 0) {
-				BundleEntryComponent bundleEntryPatient = new BundleEntryComponent();
-				subject = returnedPatients.get(0);
-				bundleEntryPatient.setResource(subject);
-				// TODO: revisit this if we found a case where we can put request in bundle.
-				// for now, FHIR spec does not indicate message to have request or response.
-//				BundleEntryRequestComponent bundleEntryRequest = new BundleEntryRequestComponent();
-//				bundleEntryRequest.setMethod(HTTPVerb.POST);
-//				bundleEntryRequest.setUrl("Patient");
-//				bundleEntryPatient.setRequest(bundleEntryRequest);
-				UUID uuid = UUID.randomUUID();
-				patientReference = "urn:uuid:" + uuid.toString();
-				bundleEntryPatient.setFullUrl(patientReference);
-				messageHeader.addFocus(new Reference(patientReference));
-				bundle.addEntry(bundleEntryPatient);
+			if (subject != null) {
+				patientReference = "urn:uuid:" + UUID.randomUUID().toString();
+				addToMessageBundle(bundle, subject, patientReference);
 			} else {
 				// We must have a patient.
 				return null;
 			}
 
-			// Add Observation.
-			List<Observation> returnedObservations = mapObservations(oruR01Message.getRESPONSE(i), patientReference);
-			for (Observation observation : returnedObservations) {
-				BundleEntryComponent bundleEntryObservation = new BundleEntryComponent();
-				bundleEntryObservation.setResource(observation);
-//				BundleEntryRequestComponent bundleEntryRequest = new BundleEntryRequestComponent();
-//				bundleEntryRequest.setMethod(HTTPVerb.POST);
-//				bundleEntryRequest.setUrl("Observation");
-//				bundleEntryObservation.setRequest(bundleEntryRequest);
-				UUID uuid = UUID.randomUUID();
-				bundleEntryObservation.setFullUrl("urn:uuid:" + uuid.toString());
-				messageHeader.addFocus(new Reference("urn:uuid:" + uuid.toString()));
-				bundle.addEntry(bundleEntryObservation);
-			}
+			// For each message bundle, add diagnostic report, observations, specimens.
+			int totalNumOfOrderObservation = patientResult.getORDER_OBSERVATIONReps();
+			for (int j = 0; j < totalNumOfOrderObservation; j++) {
+				ORU_R01_ORDER_OBSERVATION orderObservation = patientResult.getORDER_OBSERVATION(j);
 
+				// Add DiagnosticReport
+				DiagnosticReport diagnosticReport = mapDiagnosticReport(orderObservation, patientReference);
+				if (diagnosticReport != null) {
+					addToMessageBundle(bundle, diagnosticReport, "urn:uuid:" + UUID.randomUUID().toString());
+				}
+
+				// Create ServiceRequest here.
+				ServiceRequest serviceRequest = mapServiceRequest(orderObservation, patientReference);
+				Reference serviceRequestReference = null;
+				if (diagnosticReport != null) {
+					serviceRequestReference = addToMessageBundle(bundle, serviceRequest,
+							"urn:uuid:" + UUID.randomUUID().toString());
+					diagnosticReport.addBasedOn(serviceRequestReference);
+				}
+
+				// Add Practitioner (for ordering provider).
+				// OBR-16: Ordering provider. This needs to be in ServiceRequest. And,
+				// ServiceRequest
+				// only allows 1 requester. So, for now, we just take the first one.
+				// TODO: monitor the mapping.
+				int totalNumOfOrderingPartner = orderObservation.getOBR().getObr16_OrderingProviderReps();
+				if (totalNumOfOrderingPartner > 0) {
+					XCN orderingProvider = orderObservation.getOBR().getObr16_OrderingProvider(0);
+					Practitioner practitioner = getPractitionerFromXCN(orderingProvider, patientReference);
+					Reference practitionerReference = addToMessageBundle(bundle, practitioner,
+							"urn:uuid:" + UUID.randomUUID().toString());
+
+					serviceRequest.setRequester(practitionerReference);
+				}
+
+				// Add Observation.
+				List<Observation> returnedObservations = mapObservations(orderObservation, patientReference);
+				for (Observation observation : returnedObservations) {
+					Reference observationReference = addToMessageBundle(bundle, observation,
+							"urn:uuid:" + UUID.randomUUID().toString());
+
+					// Add result to diagnoticReport if exists.
+					if (diagnosticReport != null) {
+						diagnosticReport.addResult(observationReference);
+					}
+				}
+
+				// Add Specimen - 2.3 DOES NOT SUPPORT SPECIMEN
+			}
 			bundles.add(bundle);
 		}
 
 		return bundles;
 	}
 
-	private List<Patient> mapPatients(ORU_R01_RESPONSE response) {
-		List<Patient> retVal = new ArrayList<Patient>();
-
+	private Patient mapPatients(ORU_R01_RESPONSE response) {
 		Patient patient = new Patient();
 		try {
 			ORU_R01_PATIENT patientHL7 = response.getPATIENT();
@@ -149,13 +210,13 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 					Identifier identifier = new Identifier();
 					identifier.setSystem("External_Patient_ID");
 					identifier.setValue(id.getValue());
-					
+
 					// Set the type to custom CMS type.
 					CodeableConcept typeCodeableConcept = new CodeableConcept();
 					Coding typeCoding = new Coding("urn:mdi:temporary:code", "1000007", "Case Number");
 					typeCodeableConcept.addCoding(typeCoding);
 					identifier.setType(typeCodeableConcept);
-					
+
 					patient.addIdentifier(identifier);
 				} else {
 					// PID2 is required for NMS outbound message.
@@ -235,77 +296,223 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 			e.printStackTrace();
 		}
 
-		retVal.add(patient);
-		return retVal;
+		return patient;
 	}
 
-	public List<Observation> mapObservations(ORU_R01_RESPONSE response, String subjectReference) {
+	public ServiceRequest mapServiceRequest(ORU_R01_ORDER_OBSERVATION orderObservation, String subjectReference) {
+		OBR obr = orderObservation.getOBR();
+		try {
+			if (obr.isEmpty()) {
+				return null;
+			}
+		} catch (HL7Exception e1) {
+			e1.printStackTrace();
+			return null;
+		}
+
+		ServiceRequest serviceRequest = new ServiceRequest();
+
+		// set static values.
+		serviceRequest.setStatus(ServiceRequestStatus.COMPLETED);
+		serviceRequest.setIntent(ServiceRequestIntent.ORDER);
+
+		// If OBR-31 is available, add them to reasonCode.
+		int totalNumOfReasonForStudies = obr.getObr31_ReasonForStudyReps();
+		for (int i = 0; i < totalNumOfReasonForStudies; i++) {
+			try {
+				CE obrReason = obr.getObr31_ReasonForStudy(i);
+				if (obrReason.isEmpty()) {
+					continue;
+				}
+
+				CodeableConcept reasonCode = getCodeableConceptFromCE(obrReason);
+				serviceRequest.addReasonCode(reasonCode);
+			} catch (HL7Exception e) {
+				e.printStackTrace();
+			}
+		}
+
+		return serviceRequest;
+	}
+
+	public DiagnosticReport mapDiagnosticReport(ORU_R01_ORDER_OBSERVATION orderObservation, String subjectReference) {
+		DiagnosticReport diagnosticReport = new DiagnosticReport();
+		OBR obr = orderObservation.getOBR();
+
+		try {
+			// OBR 2: Placer Order Number
+			EI obr_2 = obr.getObr2_PlacerOrderNumber(0);
+			if (!obr_2.isEmpty()) {
+				Identifier identifier1 = getIdentifierFromEI(obr_2, "http://terminology.hl7.org/CodeSystem/v2-0203",
+						"PLAC");
+				if (identifier1 != null) {
+					diagnosticReport.addIdentifier(identifier1);
+				}
+			}
+
+			// OBR-3: Filter Order Number
+			EI obr_3 = obr.getObr3_FillerOrderNumber();
+			if (!obr_3.isEmpty()) {
+				Identifier identifier2 = getIdentifierFromEI(obr_3, "http://terminology.hl7.org/CodeSystem/v2-0203",
+						"FILL");
+				if (identifier2 != null) {
+					diagnosticReport.addIdentifier(identifier2);
+				}
+			}
+
+			// OBR-4: Universal Service Identifier. In MMG Lab, Test Ordered Name
+			if (!obr.getObr4_UniversalServiceIdentifier().isEmpty()) {
+				CodeableConcept codeCodeable = getCodeableConceptFromCE(obr.getObr4_UniversalServiceIdentifier());
+				diagnosticReport.setCode(codeCodeable);
+			}
+
+			// OBR-7: Observation Date/Time. In MMG Lab, The clinically relevant date/time
+			// of the observation
+			TS timeValue = obr.getObr7_ObservationDateTime();
+			if (!timeValue.isEmpty()) {
+				diagnosticReport.setEffective(new DateTimeType(timeValue.getTs1_TimeOfAnEvent().getValueAsDate()));
+			}
+
+			// OBR-11: Specimen Action Code. In MMG Lab, The action to be taken with respect
+			// to the specimens
+			// that accompany or precede this order
+			if (!obr.getObr11_SpecimenActionCode().isEmpty()) {
+				Extension specimenActionExt = new Extension();
+				specimenActionExt.setUrl("http://terminology.hl7.org/CodeSystem/v2-0065");
+				specimenActionExt.setValue(new CodeType(obr.getObr11_SpecimenActionCode().getValue()));
+				diagnosticReport.addExtension(specimenActionExt);
+			}
+
+			// OBR-16: Ordering Provider: We map this to Practitioner. So,
+			// this will be handled separately.
+
+			// OBR-22: Results Rpt/Status Chng - Date/Time
+			if (!obr.getObr22_ResultsRptStatusChngDateTime().isEmpty()) {
+				obr.getObr22_ResultsRptStatusChngDateTime();
+			}
+
+			// OBR-25: Result Status. In MMG Lab, The status of results for this order
+			if (!obr.getObr25_ResultStatus().isEmpty()) {
+				switch (obr.getObr25_ResultStatus().getValue()) {
+				case "F":
+					diagnosticReport.setStatus(DiagnosticReportStatus.FINAL);
+					break;
+				case "A":
+					diagnosticReport.setStatus(DiagnosticReportStatus.PARTIAL);
+					break;
+				case "P":
+					diagnosticReport.setStatus(DiagnosticReportStatus.PRELIMINARY);
+					break;
+				case "C":
+					diagnosticReport.setStatus(DiagnosticReportStatus.CORRECTED);
+					break;
+				default:
+					diagnosticReport.setStatus(DiagnosticReportStatus.FINAL);
+				}
+			}
+
+			// OBR-26 & 29 are skipped as v2-fhir hasn't mapped it.
+
+			// OBR-31: Reason for Study
+			// This will be mapped with ServiceRequest
+
+		} catch (DataTypeException e) {
+			e.printStackTrace();
+		} catch (HL7Exception e) {
+			e.printStackTrace();
+		}
+
+		return diagnosticReport;
+	}
+
+	public List<Observation> mapObservations(ORU_R01_ORDER_OBSERVATION orderObservation, String subjectReference) {
 		// Mapping Document:
 		// https://confluence.icl.gtri.org/pages/viewpage.action?pageId=22678246#NMStoFHIR(HL7v2.3toFHIR)-ForensicFormatHL7v2.3Specification
 
 		List<Observation> retVal = new ArrayList<Observation>();
 
 		try {
-			int totalNumberOfOrderObservation = response.getORDER_OBSERVATIONReps();
-			for (int i = 0; i < totalNumberOfOrderObservation; i++) {
-				ORU_R01_ORDER_OBSERVATION orderObservation = response.getORDER_OBSERVATION(i);
-				OBR obr = orderObservation.getOBR();
+			OBR obr = orderObservation.getOBR();
 
-				CE obr4 = obr.getObr4_UniversalServiceIdentifier();
-				String serviceDesc = null;
-				if (obr4 != null && !obr4.isEmpty()) {
-					ST serviceDescST = obr4.getCe2_Text();
-					if (serviceDescST != null && !serviceDescST.isEmpty()) {
-						serviceDesc = serviceDescST.getValue();
+			CE obr4 = obr.getObr4_UniversalServiceIdentifier();
+			String serviceDesc = null;
+			if (obr4 != null && !obr4.isEmpty()) {
+				ST serviceDescST = obr4.getCe2_Text();
+				if (serviceDescST != null && !serviceDescST.isEmpty()) {
+					serviceDesc = serviceDescST.getValue();
+				}
+			}
+
+			int totalNumberOfObservation = orderObservation.getOBSERVATIONReps();
+			for (int i = 0; i < totalNumberOfObservation; i++) {
+				Observation observation = new Observation();
+
+				if (serviceDesc != null) {
+					Identifier identifier = new Identifier();
+					identifier.setValue(serviceDesc);
+					observation.addIdentifier(identifier);
+				}
+
+				CodeableConcept typeConcept = new CodeableConcept();
+				// This is Lab result
+				Coding typeCoding = new Coding("http://hl7.org/fhir/observation-category", "laboratory", "");
+				typeConcept.addCoding(typeCoding);
+				observation.addCategory(typeConcept);
+
+				ORU_R01_OBSERVATION hl7Observation = orderObservation.getOBSERVATION(i);
+
+				// Set the subject from the patient ID.
+//				IdType IdType = new IdType("Patient", subject.getId());
+				Reference reference = new Reference(subjectReference);
+				observation.setSubject(reference);
+
+				OBX obx = hl7Observation.getOBX();
+
+				// OBX-3: Test Performed Name. In MMG lab, The lab test or analysis
+				// that was performed on the specimen (also referred as "Resulted Test Name")
+				CE obx3 = obx.getObx3_ObservationIdentifier();
+				CodeableConcept codeableConcept = getCodeableConceptFromCE(obx3);
+				observation.setCode(codeableConcept);
+
+				// OBX-4: Observation Sub-ID. In MMG lab, Distinguishes
+				// between multiple OBX segments with the same observation ID organized
+				// under one OBR.
+				// Note by GTRI: All OBX will be added to the result section of diagnostic
+				// report.
+				// There will be no issue with Observation ID in FHIR as it will assigned
+				// with unique one by FHIR server. Thus, keeping this in the result of
+				// diagnostic report should be sufficient.
+
+				// OBX-6: Units. If we have OBX-6 value, it means the value is Quantity.
+				// However, value type will choose the FHIR data type. We just parse
+				// OBX-6 first so that we have this unit available for all v2 type need
+				// the unit.
+				CE unit = obx.getObx6_Units();
+				String unitString = new String();
+				String unitCodeString = new String();
+				String unitSystemString = new String();
+				if (!unit.isEmpty()) {
+					ID id = unit.getCe1_Identifier();
+					if (id != null && !id.isEmpty()) {
+						unitString = id.getValue().replace("mcg", "ug").replace(" Creat", "{creat}");
+						unitCodeString = id.getValue().replace("mcg", "ug").replace(" Creat", "{creat}");
+					}
+
+					ST system = unit.getCe3_NameOfCodingSystem();
+					if (system != null && !system.isEmpty()) {
+						unitSystemString = system.getValue();
 					}
 				}
-				
-				int totalNumberOfObservation = orderObservation.getOBSERVATIONReps();
-				for (int j = 0; j < totalNumberOfObservation; j++) {
-					Observation observation = new Observation();
 
-					if (serviceDesc != null) {
-						Identifier identifier = new Identifier();
-						identifier.setValue(serviceDesc);
-						observation.addIdentifier(identifier);
-					}
-					
-					CodeableConcept typeConcept = new CodeableConcept();
-					// This is Lab result
-					Coding typeCoding = new Coding("http://hl7.org/fhir/observation-category", "laboratory", "");
-					typeConcept.addCoding(typeCoding);
-					observation.addCategory(typeConcept);
+				// OBX-2: Value Type. This is used for observation.value[x] and
+				// observation.referenceRange
+				// OBX-5: Observation Value. This has result value. Parsed based on the value
+				// type.
+				ID valueType = obx.getObx2_ValueType();
+				int totalNumOfObx5 = obx.getObx5_ObservationValueReps();
 
-					ORU_R01_OBSERVATION hl7Observation = orderObservation.getOBSERVATION(j);
-
-					// Set the subject from the patient ID.
-//				IdType IdType = new IdType("Patient", subject.getId());
-					Reference reference = new Reference(subjectReference);
-					observation.setSubject(reference);
-
-					OBX obx = hl7Observation.getOBX();
-
-					// See if we have a unit (from OBX-6)
-					// Set the unit if available from OBX-6
-					CE unit = obx.getObx6_Units();
-					String unitString = new String();
-					String unitCodeString = new String();
-					String unitSystemString = new String();
-					if (!unit.isEmpty()) {
-						ID id = unit.getCe1_Identifier();
-						if (id != null && !id.isEmpty()) {
-							unitString = id.getValue().replace("mcg", "ug").replace(" Creat", "{creat}");
-							unitCodeString = id.getValue().replace("mcg", "ug").replace(" Creat", "{creat}");
-						}
-
-						ST system = unit.getCe3_NameOfCodingSystem();
-						if (system != null && !system.isEmpty()) {
-							unitSystemString = system.getValue();
-						}
-					}
-
-					// Value Type for observation.value[x] and observation.referenceRange
-					ID valueType = obx.getObx2_ValueType();
+				for (int j = 0; j < totalNumOfObx5; j++) {
+					Type obsValue = null;
 					Varies observationValue = obx.getObx5_ObservationValue(0);
 					if (valueType.getValue().equals("NM")) {
 						// This should be valueQuantity
@@ -323,7 +530,66 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 							quantity.setSystem(unitSystemString);
 						}
 
-						observation.setValue(quantity);
+						obsValue = quantity;
+					} else if (valueType.getValue().equals("CE")) {
+						CE ceValue = (CE) observationValue.getData();
+
+						obsValue = getCodeableConceptFromCE(ceValue);
+					} else if (valueType.getValue().equals("TS")) {
+						TS timeValue = (TS) observationValue.getData();
+
+						obsValue = new DateTimeType(timeValue.getTs1_TimeOfAnEvent().getValueAsDate());
+					} else if (valueType.getValue().equals("SN")) {
+						SN snValue = (SN) observationValue.getData();
+
+						Quantity quantity1 = new Quantity();
+						Quantity quantity2 = new Quantity();
+
+						NM sn1 = snValue.getNum1();
+						NM sn2 = snValue.getNum2();
+
+						if (!sn1.isEmpty()) {
+							quantity1.setValue(Double.parseDouble(sn1.getValue()));
+						}
+
+						if (!sn2.isEmpty()) {
+							quantity2.setValue(Double.parseDouble(sn2.getValue()));
+						}
+
+						ST comparator = snValue.getComparator();
+						ST separatorSuffix = snValue.getSeparatorOrSuffix();
+
+						if (!comparator.isEmpty()) {
+							quantity1.setComparator(QuantityComparator.valueOf(comparator.getValue()));
+							quantity2.setComparator(QuantityComparator.valueOf(comparator.getValue()));
+						}
+						if (":".equals(separatorSuffix.getValue()) || "/".equals(separatorSuffix.getValue())) {
+							// valueRatio
+							Ratio ratio = new Ratio();
+							ratio.setNumerator(quantity1);
+							ratio.setDenominator(quantity2);
+
+							obsValue = ratio;
+						} else if ("-".equals(separatorSuffix.getValue())) {
+							// This is range.
+							Range range = new Range();
+							range.setLow(quantity1);
+							range.setHigh(quantity2);
+
+							obsValue = range;
+						} else if ("+".equals(separatorSuffix.getValue())) {
+							// String combination
+							StringType strType = new StringType(comparator.getValue() + " " + quantity1.getValue() + " "
+									+ separatorSuffix.getValue() + " " + quantity2.getValue());
+
+							obsValue = strType;
+						} else {
+							obsValue = quantity1;
+						}
+					} else if (valueType.getValue().equals("DT")) {
+						DT dtValue = (DT) observationValue.getData();
+
+						obsValue = new StringType(dtValue.getValue());
 					} else { // ST and TX - we treat both ST and TX as String
 						StringType valueString = null;
 						if (valueType.getValue().equals("ST")) {
@@ -333,100 +599,150 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 							TX textValue = (TX) observationValue.getData();
 							valueString = new StringType(textValue.getValue());
 						}
-						observation.setValue(valueString);
+
+						obsValue = valueString;
 					}
 
-					// observation.code from OBX-3
-					CE obx3 = obx.getObx3_ObservationIdentifier();
-					CodeableConcept codeableConcept = getCodeableConceptFromCE(obx3);
-					observation.setCode(codeableConcept);
+					// If we only have one value, we use observation.value. If more than one,
+					// we use component.
+					if (totalNumOfObx5 > 1) {
+						// Component
+						ObservationComponentComponent obsCompComp = new ObservationComponentComponent();
+						obsCompComp.setCode(observation.getCode());
+						obsCompComp.setValue(obsValue);
+						observation.addComponent(obsCompComp);
+					} else {
+						observation.setValue(obsValue);
+					}
+				}
 
-					// observation.referenceRange from OBX-7
-					ST obx7 = obx.getObx7_ReferencesRange();
-					if (!obx7.isEmpty()) {
-						String obx7StringValue = obx7.getValue();
-						ObservationReferenceRangeComponent referenceRangeComponent = new ObservationReferenceRangeComponent();
+				// OBX-7: References Range. In MMG lab, Identifies the upper and lower limits or
+				// bounds of test result values
+				ST obx7 = obx.getObx7_ReferencesRange();
+				if (!obx7.isEmpty()) {
+					String obx7StringValue = obx7.getValue();
+					ObservationReferenceRangeComponent referenceRangeComponent = new ObservationReferenceRangeComponent();
 
-						try {
-							double obx7Value = Double.parseDouble(obx7StringValue);
-							SimpleQuantity simpleQuantity = new SimpleQuantity();
-							simpleQuantity.setValue(obx7Value);
-							if (!unitString.isEmpty()) {
-								simpleQuantity.setUnit(unitString);
-								simpleQuantity.setCode(unitCodeString);
-							}
-							if (!unitSystemString.isEmpty()) {
-								simpleQuantity.setSystem(unitSystemString);
-							}
-							referenceRangeComponent.setHigh(simpleQuantity);
-						} catch (NumberFormatException nfe) {
-							referenceRangeComponent.setText(obx7StringValue);
+					try {
+						double obx7Value = Double.parseDouble(obx7StringValue);
+						SimpleQuantity simpleQuantity = new SimpleQuantity();
+						simpleQuantity.setValue(obx7Value);
+						if (!unitString.isEmpty()) {
+							simpleQuantity.setUnit(unitString);
+							simpleQuantity.setCode(unitCodeString);
 						}
-
-						observation.addReferenceRange(referenceRangeComponent);
-					}
-					// observation.status from OBX-11
-					ID obx11 = obx.getObx11_ObservResultStatus();
-					if (obx11 != null && !obx11.isEmpty()) {
-						String hl7Status = obx11.getValue();
-						if ("F".equals(hl7Status)) {
-							// Final Result.
-							observation.setStatus(ObservationStatus.FINAL);
-						} else if ("C".equals(hl7Status)) {
-							// Record coming over is a correction and thus replaces a final result.
-							observation.setStatus(ObservationStatus.AMENDED);
-						} else if ("X".equals(hl7Status)) {
-							// Record coming over is a correction and thus replaces a final result.
-							observation.setStatus(ObservationStatus.CANCELLED);
-						} else if ("P".equals(hl7Status)) {
-							// Record coming over is a correction and thus replaces a final result.
-							observation.setStatus(ObservationStatus.PRELIMINARY);
-						} else {
-							LOGGER.fatal(
-									"OBX received with status = " + hl7Status + ". (Table:" + obx11.getTable() + ")");
-							continue;
+						if (!unitSystemString.isEmpty()) {
+							simpleQuantity.setSystem(unitSystemString);
 						}
+						referenceRangeComponent.setHigh(simpleQuantity);
+					} catch (NumberFormatException nfe) {
+						referenceRangeComponent.setText(obx7StringValue);
 					}
 
-					// effective[x] from obx14
-					TS observationDateTime = obx.getObx14_DateTimeOfTheObservation();
-					DateTimeType dateTimeType = new DateTimeType(
-							observationDateTime.getTs1_TimeOfAnEvent().getValueAsDate());
-					observation.setEffective(dateTimeType);
+					observation.addReferenceRange(referenceRangeComponent);
+				}
 
-					int totalNumberOfNTE = hl7Observation.getNTEReps();
-					List<Annotation> annotations = new ArrayList<Annotation>();
-					for (int k = 0; k < totalNumberOfNTE; k++) {
-						// This is a comment. Observation can contain one comment.
-						// So we combine all the NTEs.
-						NTE nte = hl7Observation.getNTE(k);
-						if (nte != null && !nte.isEmpty()) {
-							int totalNumberOfNTEComment = nte.getNte3_CommentReps();
-							for (int n = 0; n < totalNumberOfNTEComment; n++) {
-								FT nte3 = nte.getNte3_Comment(n);
-								if (nte3 != null && !nte3.isEmpty()) {
-									ID nte2 = nte.getNte2_SourceOfComment();
-									if (!nte2.isEmpty() && "METHOD".equalsIgnoreCase(nte2.getValue())) {
-										// NMS specific. We put this in method element in
-										// FHIR.
-										CodeableConcept methodCodeableConcept = new CodeableConcept();
-										methodCodeableConcept.setText(nte3.getValue());
-										observation.setMethod(methodCodeableConcept);
-									} else {
-										Annotation annotation = new Annotation();
-										annotation.setText(nte3.getValue());
-										annotations.add(annotation);
-									}
+				// OBX-8: Abnormal Flags. In MMG lab, Abnormal flags used for
+				// laboratory result interpretation by the lab (not epidemiologist's
+				// interpretation).
+				// The interpretation flag identifies a result that is not typical
+				// as well as how its not typical. Examples: susceptible, resistant, normal,
+				// above
+				// upper panic limits, below absolute low.
+				int totalNumOfAbnormalFlag = obx.getObx8_AbnormalFlagsReps();
+				for (int j = 0; j < totalNumOfAbnormalFlag; j++) {
+					ID abnormalFlag = obx.getObx8_AbnormalFlags(j);
+					if (!abnormalFlag.isEmpty()) {
+						observation.addInterpretation(new CodeableConcept(
+								new Coding("urn:oid:2.16.840.1.113883.12.78", abnormalFlag.getValue(), "")));
+					}
+				}
+				observation.addInterpretation(codeableConcept);
+
+				// observation.status from OBX-11
+				ID obx11 = obx.getObx11_ObservResultStatus();
+				if (obx11 != null && !obx11.isEmpty()) {
+					String hl7Status = obx11.getValue();
+					if ("F".equals(hl7Status)) {
+						// Final Result.
+						observation.setStatus(ObservationStatus.FINAL);
+					} else if ("C".equals(hl7Status)) {
+						// Record coming over is a correction and thus replaces a final result.
+						observation.setStatus(ObservationStatus.AMENDED);
+					} else if ("X".equals(hl7Status)) {
+						// Record coming over is a correction and thus replaces a final result.
+						observation.setStatus(ObservationStatus.CANCELLED);
+					} else if ("P".equals(hl7Status)) {
+						// Record coming over is a correction and thus replaces a final result.
+						observation.setStatus(ObservationStatus.PRELIMINARY);
+					} else {
+						LOGGER.info("OBX received with status = " + hl7Status + ". (Table:" + obx11.getTable() + ")");
+						observation.setStatus(ObservationStatus.UNKNOWN);
+					}
+				}
+
+				// OBX-14: Specimen Collection Date. In MMG lab, Date/time of observation in OBX
+				// segment for ELR infers
+				// the specimen collection date
+				TS observationDateTime = obx.getObx14_DateTimeOfTheObservation();
+				DateTimeType dateTimeType = new DateTimeType(observationDateTime.getTs1_TimeOfAnEvent().getValueAsDate());
+				observation.setEffective(dateTimeType);
+
+				// OBX-17: Observation Method. In MMG lab, The technique or method used to
+				// perform the test and
+				// obtain the test results (Examples: serum neutralization, titration, dipstick,
+				// test strip, anaerobic culture)
+				// This is repeating value. Bur, FHIR can handdle only one method.
+				int totalNumOfMethods = obx.getObx17_ObservationMethodReps();
+				if (totalNumOfMethods > 0) {
+					CE methodCE = obx.getObx17_ObservationMethod(0);
+					CodeableConcept methodCodeable = getCodeableConceptFromCE(methodCE);
+					observation.setMethod(methodCodeable);
+				}
+
+				int totalNumberOfNTE = hl7Observation.getNTEReps();
+				List<Annotation> annotations = new ArrayList<Annotation>();
+				for (int k = 0; k < totalNumberOfNTE; k++) {
+					Annotation annotation = new Annotation();
+					NTE nte = hl7Observation.getNTE(k);
+					if (nte != null && !nte.isEmpty()) {
+						ID sourceOfCommentID = nte.getNte2_SourceOfComment();
+						if (!sourceOfCommentID.isEmpty()) {
+							Extension sourceOfCommentExt = new Extension();
+							sourceOfCommentExt.setUrl("http://hl7.org/StructureDefinition/ext-sourceOfComment");
+							sourceOfCommentExt.setValue(new Coding("http://terminology.hl7.org/CodeSystem/v2-0105",
+									sourceOfCommentID.getValue(), ""));
+							annotation.addExtension(sourceOfCommentExt);
+						}
+						int totalNumberOfNTEComment = nte.getNte3_CommentReps();
+						String allComments = new String();
+						for (int n = 0; n < totalNumberOfNTEComment; n++) {
+							FT nte3 = nte.getNte3_Comment(n);
+							if (nte3 != null && !nte3.isEmpty()) {
+								ID nte2 = nte.getNte2_SourceOfComment();
+								if (!nte2.isEmpty() && "METHOD".equalsIgnoreCase(nte2.getValue())) {
+									// NMS specific. We put this in method element in
+									// FHIR.
+									CodeableConcept methodCodeableConcept = new CodeableConcept();
+									methodCodeableConcept.setText(nte3.getValue());
+									observation.setMethod(methodCodeableConcept);
+								} else {
+									allComments.concat(" " + nte3.getValue());
 								}
 							}
 						}
-					}
-					if (annotations != null && !annotations.isEmpty()) {
-						observation.setNote(annotations);
-					}
 
-					retVal.add(observation);
+						annotation.setText(allComments.trim());
+						annotations.add(annotation);
+
+					}
 				}
+				
+				if (annotations != null && !annotations.isEmpty()) {
+					observation.setNote(annotations);
+				}
+
+				retVal.add(observation);
 			}
 
 		} catch (HL7Exception e) {
@@ -451,10 +767,216 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 				return hd3.getValue();
 			}
 		} catch (HL7Exception e) {
-			// TODO Auto-generated catch block
 			e.printStackTrace();
 			return null;
 		}
+	}
+
+	public Practitioner getPractitionerFromXCN(XCN xcn, String subjectReference) {
+		Practitioner practitioner = new Practitioner();
+
+		try {
+			if (xcn.isEmpty()) {
+				// if we have nothing in OBR, then we return null.
+				return null;
+			}
+
+			// xcn.1 for ID
+			Identifier identifier = new Identifier();
+			ST personIdentifier = xcn.getXcn1_IDNumber();
+			if (!personIdentifier.isEmpty()) {
+				identifier.setValue(personIdentifier.getValue());
+				practitioner.addIdentifier(identifier);
+			}
+
+			// xcn.2 - 7 name and title
+			ST familyName = xcn.getXcn2_FamilyName();
+			HumanName name = new HumanName();
+			if (!familyName.isEmpty()) {
+				name.setFamily(familyName.getValue());
+			}
+
+			ST givenName = xcn.getXcn3_GivenName();
+			if (!givenName.isEmpty()) {
+
+			}
+			name.addGiven(givenName.getValue());
+
+			ST secGivenName = xcn.getXcn4_MiddleInitialOrName();
+			if (!secGivenName.isEmpty()) {
+				name.addGiven(secGivenName.getValue());
+			}
+
+			ST suffix = xcn.getXcn5_SuffixEgJRorIII();
+			if (!suffix.isEmpty()) {
+				name.addSuffix(suffix.getValue());
+			}
+
+			ST prefix = xcn.getXcn6_PrefixEgDR();
+			if (!prefix.isEmpty()) {
+				name.addPrefix(prefix.getValue());
+			}
+
+			ST degree = xcn.getXcn7_DegreeEgMD();
+			if (!degree.isEmpty()) {
+				name.addPrefix(degree.getValue());
+			}
+
+			// XCN.10 for name type.
+			ID use = xcn.getXcn10_NameType();
+			if (!use.isEmpty()) {
+				switch (use.getValue()) {
+				case "L":
+					name.setUse(NameUse.OFFICIAL);
+					break;
+				case "M":
+					name.setUse(NameUse.MAIDEN);
+					break;
+				case "N":
+					name.setUse(NameUse.NICKNAME);
+					break;
+				case "S":
+					name.setUse(NameUse.ANONYMOUS);
+					break;
+				default:
+					name.setUse(NameUse.USUAL);
+				}
+			}
+
+			if (!name.isEmpty()) {
+				practitioner.addName(name);
+			}
+
+			// xcn.9 : Assigning Authority. In MMG Lab, The physician / provider who ordered
+			// the test
+			if (!xcn.getXcn9_AssigningAuthority().isEmpty()) {
+				getIdentifierFromHD(identifier, xcn.getXcn9_AssigningAuthority(),
+						"http://hl7.org/StructureDefinition/ext-assigningauthority");
+			}
+
+			// xcn.13: Identifier Type Code.
+			if (!xcn.getXcn13_IdentifierTypeCode().isEmpty()) {
+				Coding code = new Coding();
+				code.setCode(xcn.getXcn13_IdentifierTypeCode().getValue());
+				identifier.setType(new CodeableConcept(code));
+			}
+
+			// xcn.14: Assigning Facility.
+			if (!xcn.getXcn14_AssigningFacilityID().isEmpty()) {
+				getIdentifierFromHD(identifier, xcn.getXcn14_AssigningFacilityID(),
+						"http://hl7.org/StructureDefinition/ext-assigningFacility");
+			}
+
+			// xcn.21: Professional Suffix.
+
+		} catch (HL7Exception e) {
+			e.printStackTrace();
+		}
+
+		return practitioner;
+	}
+
+	private Identifier getIdentifierFromHD(Identifier identifier, HD hD, String url) {
+		if (identifier == null) {
+			identifier = new Identifier();
+		}
+
+		try {
+			Extension extension = new Extension();
+			extension.setUrl(url);
+
+			if (!hD.isEmpty()) {
+				IS hd_1 = hD.getHd1_NamespaceID();
+				ST hd_2 = hD.getHd2_UniversalID();
+				ID hd_3 = hD.getHd3_UniversalIDType();
+
+				if (!hd_1.isEmpty()) {
+					Extension extension_1 = new Extension();
+					extension_1.setUrl("nameSpaceID");
+					extension_1.setValue(new StringType(hd_1.getValue()));
+					extension.addExtension(extension_1);
+				}
+
+				if (!hd_2.isEmpty()) {
+					Extension extension_1 = new Extension();
+					extension_1.setUrl("universalID");
+					extension_1.setValue(new StringType(hd_2.getValue()));
+					extension.addExtension(extension_1);
+				}
+
+				if (!hd_3.isEmpty()) {
+					Extension extension_1 = new Extension();
+					extension_1.setUrl("universalIDType");
+					extension_1.setValue(new StringType(hd_3.getValue()));
+					extension.addExtension(extension_1);
+				}
+			}
+
+			identifier.addExtension(extension);
+
+		} catch (HL7Exception e) {
+			e.printStackTrace();
+		}
+
+		return identifier;
+	}
+
+	private Identifier getIdentifierFromEI(EI eI, String typeSystem, String typeCode) {
+		Identifier identifier = null;
+		try {
+
+			if (eI != null && !eI.isEmpty()) {
+				ST eI_1 = eI.getEi1_EntityIdentifier();
+				IS eI_2 = eI.getEi2_NamespaceID();
+				ST eI_3 = eI.getEi3_UniversalID();
+				ID eI_4 = eI.getEi4_UniversalIDType();
+
+				identifier = new Identifier();
+				Coding typeCoding = new Coding(typeSystem, typeCode, null);
+				CodeableConcept typeCodeable = new CodeableConcept(typeCoding);
+				identifier.setType(typeCodeable);
+
+				if (eI_1 != null && !eI_1.isEmpty()) {
+					identifier.setValue(eI_1.getValue());
+				}
+
+				// Create Extension
+				Extension eIExtension = new Extension();
+				if (eI_2 != null && !eI_2.isEmpty()) {
+					Extension eI_2_extension = new Extension();
+					eI_2_extension.setUrl("nameSpaceID");
+					eI_2_extension.setValue(new StringType(eI_2.getValue()));
+					eIExtension.addExtension(eI_2_extension);
+				}
+
+				if (eI_3 != null && !eI_3.isEmpty()) {
+					Extension eI_3_extension = new Extension();
+					eI_3_extension.setUrl("universalID");
+					eI_3_extension.setValue(new StringType(eI_3.getValue()));
+					eIExtension.addExtension(eI_3_extension);
+				}
+
+				if (eI_4 != null && !eI_4.isEmpty()) {
+					Extension eI_4_extension = new Extension();
+					eI_4_extension.setUrl("universalIDType");
+					eI_4_extension.setValue(new CodeType(eI_4.getValue()));
+					eIExtension.addExtension(eI_4_extension);
+				}
+
+				if (!eIExtension.isEmpty()) {
+					eIExtension.setUrl("http://hl7.org/StructureDefinition/ext-assigningauthority");
+
+					identifier.addExtension(eIExtension);
+				}
+
+			}
+
+		} catch (HL7Exception e) {
+			e.printStackTrace();
+		}
+
+		return identifier;
+
 	}
 
 	private CodeableConcept getCodeableConceptFromCE(CE codeElement) {
@@ -483,7 +1005,65 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 				retVal.addCoding(coding);
 			}
 		} catch (HL7Exception e) {
+			e.printStackTrace();
+		}
+
+		return retVal;
+	}
+
+	private Quantity getQuantityFromCQ(CQ cq) {
+		try {
+			if (cq == null || cq.isEmpty())
+				return null;
+		} catch (HL7Exception e) {
+			e.printStackTrace();
+		}
+
+		NM quantity = cq.getQuantity();
+		CE unit = cq.getUnits();
+
+		Quantity retQuantity = new Quantity();
+		retQuantity.setValue(Double.valueOf(quantity.getValue()));
+		CodeableConcept unitCodeable = getCodeableConceptFromCE(unit);
+
+		retQuantity.setCode(unitCodeable.getCodingFirstRep().getCode());
+		retQuantity.setUnit(unitCodeable.getCodingFirstRep().getDisplay());
+		retQuantity.setSystem(unitCodeable.getCodingFirstRep().getSystem());
+
+		return null;
+	}
+
+	public Type getDateFromDR(DR dr) {
+		Type retVal = null;
+		try {
+			if (dr == null || dr.isEmpty()) {
+				return null;
+			}
+		} catch (HL7Exception e) {
 			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+
+		TS dr1 = dr.getDr1_RangeStartDateTime();
+		TS dr2 = dr.getDr2_RangeEndDateTime();
+
+		try {
+			if (!dr1.isEmpty() && !dr2.isEmpty()) {
+				// This is period.
+				Period period = new Period();
+				Date startDateTime = dr1.getTs1_TimeOfAnEvent().getValueAsDate();
+				Date endDateTime = dr2.getTs1_TimeOfAnEvent().getValueAsDate();
+
+				period.setStart(startDateTime);
+				period.setEnd(endDateTime);
+
+				return (Type) period;
+			} else if (!dr1.isEmpty()) {
+				DateTimeType dt = new DateTimeType(dr1.getTs1_TimeOfAnEvent().getValueAsDate());
+
+				return (Type) dt;
+			}
+		} catch (HL7Exception e) {
 			e.printStackTrace();
 		}
 
@@ -579,7 +1159,6 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 			}
 
 		} catch (HL7Exception e) {
-			// TODO Auto-generated catch block
 			e.printStackTrace();
 			return null;
 		}
@@ -588,7 +1167,6 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 	}
 
 	public MessageHeader getMessageHeader() {
-		// TODO Auto-generated method stub
 		return null;
 	}
 

@@ -8,7 +8,8 @@ public enum V2FHIRCodeSystem {
 	LN("LN", "http://loinc.org"),
 	NDC("NDC", "http://hl7.org/fhir/sid/ndc"),
 	SCT("SCT", "http://snomed.info/sct"),
-	SCTMMG("SCT", "http://snomed.info/sct");
+	SCTMMG("SCT", "http://snomed.info/sct"),
+	UCUM("UCUM", "http://unitsofmeasure.org");
 	
 	
 	String v2CodeSystem;
@@ -54,6 +55,8 @@ public enum V2FHIRCodeSystem {
 			fhirCodeSystem = SCT.getFhirCodeSystem();			
 		} else if (SCTMMG.getV2CodeSystem().equals(v2CodeSystem)) {
 			fhirCodeSystem = SCTMMG.getFhirCodeSystem();			
+		} else if (UCUM.getV2CodeSystem().equals(v2CodeSystem)) {
+			fhirCodeSystem = UCUM.getFhirCodeSystem();			
 		}
 		
 		return fhirCodeSystem;
@@ -78,6 +81,8 @@ public enum V2FHIRCodeSystem {
 			v2CodeSystem = SCT.getV2CodeSystem();			
 		} else if (SCTMMG.getV2CodeSystem().equals(fhirCodeSystem)) {
 			v2CodeSystem = SCTMMG.getV2CodeSystem();			
+		}  else if (UCUM.getV2CodeSystem().equals(fhirCodeSystem)) {
+			v2CodeSystem = UCUM.getV2CodeSystem();			
 		}
 		
 		return v2CodeSystem;
