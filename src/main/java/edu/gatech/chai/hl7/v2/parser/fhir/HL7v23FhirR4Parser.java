@@ -1040,7 +1040,6 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 				return null;
 			}
 		} catch (HL7Exception e) {
-			// TODO Auto-generated catch block
 			e.printStackTrace();
 		}
 
@@ -1085,27 +1084,21 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 				}
 			}
 
-//			if (!receivingFacility.isEmpty()) {
-//				ST receivingFacilityST = receivingFacility.getHd2_UniversalID();
-//				if (!receivingFacilityST.isEmpty()) {
-//					setReceivingFacilityName(receivingFacilityST.getValue());
-//				}
-//			}
-
 			// messageheader.event from MSH9.2. MSH9.2 is triggering event.
 			// For ELR, it's R01. We need to map this to FHIR message-event, which
 			// can be observation-provide.
 			Coding eventCoding = new Coding();
 			CM_MSG msh9 = msh.getMsh9_MessageType();
 			if (msh9 != null && !msh9.isEmpty()) {
+				ID msh9_1 = msh9.getCm_msg1_MessageType();
 				ID msh9_2 = msh9.getCm_msg2_TriggerEvent();
-				if (msh9_2 != null && !msh9_2.isEmpty()) {
-					if (msh9_2.getValue().equals("R01")) {
+				if (!msh9_1.isEmpty() && !msh9_2.isEmpty()) {
+					if ("ORU".equals(msh9_2.getValue()) && "R01".equals(msh9_2.getValue())) {
 						eventCoding.setSystem(ObservationCategory.LABORATORY.getSystem());
 						eventCoding.setCode(ObservationCategory.LABORATORY.toCode());
 						eventCoding.setDisplay(ObservationCategory.LABORATORY.getDisplay());
 					} else {
-						eventCoding.setCode(msh9_2.getValue());
+						eventCoding.setCode(msh9_1.getValue()+"_"+msh9_2.getValue());
 					}
 				}
 			}
