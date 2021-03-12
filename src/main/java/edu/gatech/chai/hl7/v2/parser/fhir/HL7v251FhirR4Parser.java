@@ -5,6 +5,8 @@ import java.util.Date;
 import java.util.List;
 import java.util.UUID;
 
+import javax.print.attribute.standard.JobMediaSheets;
+
 import org.apache.log4j.Logger;
 import org.hl7.fhir.instance.model.api.IBaseBundle;
 import org.hl7.fhir.r4.model.Annotation;
@@ -133,6 +135,7 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 			 */
 			Bundle bundle = new Bundle();
 			bundle.setType(Bundle.BundleType.MESSAGE);
+			bundle.setId(UUID.randomUUID().toString());
 
 			BundleEntryComponent bundleEntryMessageHeader = new BundleEntryComponent();
 			bundleEntryMessageHeader.setResource(messageHeader);
@@ -1187,21 +1190,21 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 
 				if (!hd_1.isEmpty()) {
 					Extension extension_1 = new Extension();
-					extension_1.setUrl("nameSpaceID");
+					extension_1.setUrl("urn:mmgid:nameSpaceID");
 					extension_1.setValue(new StringType(hd_1.getValue()));
 					extension.addExtension(extension_1);
 				}
 
 				if (!hd_2.isEmpty()) {
 					Extension extension_1 = new Extension();
-					extension_1.setUrl("universalID");
+					extension_1.setUrl("urn:mmgid:universalID");
 					extension_1.setValue(new StringType(hd_2.getValue()));
 					extension.addExtension(extension_1);
 				}
 
 				if (!hd_3.isEmpty()) {
 					Extension extension_1 = new Extension();
-					extension_1.setUrl("universalIDType");
+					extension_1.setUrl("urn:mmgid:universalIDType");
 					extension_1.setValue(new StringType(hd_3.getValue()));
 					extension.addExtension(extension_1);
 				}
@@ -1239,21 +1242,21 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 				Extension eIExtension = new Extension();
 				if (eI_2 != null && !eI_2.isEmpty()) {
 					Extension eI_2_extension = new Extension();
-					eI_2_extension.setUrl("nameSpaceID");
+					eI_2_extension.setUrl("urn:mmgid:nameSpaceID");
 					eI_2_extension.setValue(new StringType(eI_2.getValue()));
 					eIExtension.addExtension(eI_2_extension);
 				}
 
 				if (eI_3 != null && !eI_3.isEmpty()) {
 					Extension eI_3_extension = new Extension();
-					eI_3_extension.setUrl("universalID");
+					eI_3_extension.setUrl("urn:mmgid:universalID");
 					eI_3_extension.setValue(new StringType(eI_3.getValue()));
 					eIExtension.addExtension(eI_3_extension);
 				}
 
 				if (eI_4 != null && !eI_4.isEmpty()) {
 					Extension eI_4_extension = new Extension();
-					eI_4_extension.setUrl("universalIDType");
+					eI_4_extension.setUrl("urn:mmgid:universalIDType");
 					eI_4_extension.setValue(new CodeType(eI_4.getValue()));
 					eIExtension.addExtension(eI_4_extension);
 				}
@@ -1402,8 +1405,7 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 		if (messageHeader == null)
 			messageHeader = new MessageHeader();
 
-		HD sendingFacility = msh.getSendingFacility();
-//		HD receivingFacility = msh.getReceivingFacility();
+		HD sendingFacility = msh.getMsh4_SendingFacility();
 		try {
 			if (!sendingFacility.isEmpty()) {
 				IS sendingFacilityName = sendingFacility.getHd1_NamespaceID();
@@ -1412,28 +1414,69 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 				}
 			}
 
-//			if (!receivingFacility.isEmpty()) {
-//				ST receivingFacilityST = receivingFacility.getHd2_UniversalID();
-//				if (!receivingFacilityST.isEmpty()) {
-//					setReceivingFacilityName(receivingFacilityST.getValue());
-//				}
-//			}
-
 			// messageheader.event from MSH9.2. MSH9.2 is triggering event.
 			// For ELR, it's R01. We need to map this to FHIR message-event, which
 			// can be observation-provide.
 			Coding eventCoding = new Coding();
 			MSG msh9 = msh.getMsh9_MessageType();
 			if (msh9 != null && !msh9.isEmpty()) {
+				ID msh9_1 = msh9.getMsg1_MessageCode();
 				ID msh9_2 = msh9.getMsg2_TriggerEvent();
-				if (msh9_2 != null && !msh9_2.isEmpty()) {
-					if (msh9_2.getValue().equals("R01")) {
+				if (!msh9_1.isEmpty() && !msh9_2.isEmpty()) {
+					if ("ORU".equals(msh9_1.getValue()) && "R01".equals(msh9_2.getValue())) {
 						eventCoding.setSystem(ObservationCategory.LABORATORY.getSystem());
 						eventCoding.setCode(ObservationCategory.LABORATORY.toCode());
 						eventCoding.setDisplay(ObservationCategory.LABORATORY.getDisplay());
 					} else {
-						eventCoding.setCode(msh9_2.getValue());
+						ID msh9_3 = msh9.getMsg3_MessageStructure();
+						if (!msh9_3.isEmpty()) {
+							eventCoding.setCode(msh9_3.getValue());
+						} else {
+							eventCoding.setDisplay("NOT AVAILABLE");
+						}
 					}
+				}
+			}
+			
+			int totalNumOfMsh21 = msh.getMsh21_MessageProfileIdentifierReps();
+			for (int i = 0; i < totalNumOfMsh21; i++) {
+				Extension msgProfileExt = new Extension();
+				msgProfileExt.setUrl("http://hl7.org/StructureDefinition/ext-messageProfile");
+				eventCoding.addExtension(msgProfileExt);
+				
+				EI msh21 = msh.getMsh21_MessageProfileIdentifier(i);
+				
+				ST entityId = msh21.getEi1_EntityIdentifier();
+				IS namespaceId = msh21.getEi2_NamespaceID();
+				ST universalId = msh21.getEi3_UniversalID();
+				ID universalIdType = msh21.getEi4_UniversalIDType();
+				
+				if (!entityId.isEmpty()) {
+					Extension ext = new Extension();
+					ext.setUrl("urn:mmgid:entityIdentifier");
+					ext.setValue(new StringType(entityId.getValue()));
+					msgProfileExt.addExtension(ext);
+				}
+				
+				if (!namespaceId.isEmpty()) {
+					Extension ext = new Extension();
+					ext.setUrl("urn:mmgid:nameSpaceID");
+					ext.setValue(new StringType(namespaceId.getValue()));
+					msgProfileExt.addExtension(ext);
+				}
+				
+				if (!universalId.isEmpty()) {
+					Extension ext = new Extension();
+					ext.setUrl("urn:mmgid:universalID");
+					ext.setValue(new StringType(universalId.getValue()));
+					msgProfileExt.addExtension(ext);
+				}
+
+				if (!universalIdType.isEmpty()) {
+					Extension ext = new Extension();
+					ext.setUrl("urn:mmgid:universalIDType");
+					ext.setValue(new StringType(universalIdType.getValue()));
+					msgProfileExt.addExtension(ext);
 				}
 			}
 
@@ -1451,9 +1494,15 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 			// messageevent.destination.name from MSH5 and MSH6
 			MessageDestinationComponent messageDestination = new MessageDestinationComponent();
 			HD msh5 = msh.getMsh5_ReceivingApplication();
-			String destinationName = getValueOfHD(msh5);
-			if (destinationName != null && !destinationName.isEmpty()) {
-				messageDestination.setName(destinationName);
+			if (!msh5.isEmpty()) {
+				IS destinationName = msh5.getHd1_NamespaceID();
+				if (!destinationName.isEmpty()) {
+					messageDestination.setName(destinationName.getValue());
+				}
+				String destinationEndpoint = getValueOfHD(msh5);
+				if (destinationEndpoint != null && !destinationEndpoint.isEmpty()) {
+					messageDestination.setEndpoint(destinationEndpoint);
+				}
 			}
 
 			HD msh6 = msh.getMsh6_ReceivingFacility();
@@ -1480,13 +1529,19 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 
 			// messageHeader.source from MSH-3
 			HD msh3 = msh.getMsh3_SendingApplication();
-			String sourceDestination = getValueOfHD(msh3);
-			if (sourceDestination != null && !sourceDestination.isEmpty()) {
+			if (!msh3.isEmpty()) {
 				MessageSourceComponent messageSource = new MessageSourceComponent();
-				messageSource.setEndpoint(sourceDestination);
-				messageHeader.setSource(messageSource);
-			}
+				IS nameSpaceId = msh3.getHd1_NamespaceID();
+				if (!nameSpaceId.isEmpty()) {
+					messageSource.setName(nameSpaceId.getValue());
+				}
+				String sourceDestination = getValueOfHD(msh3);
+				if (sourceDestination != null && !sourceDestination.isEmpty()) {
+					messageSource.setEndpoint(sourceDestination);
+					messageHeader.setSource(messageSource);
+				}
 
+			}
 		} catch (HL7Exception e) {
 			e.printStackTrace();
 			return null;
