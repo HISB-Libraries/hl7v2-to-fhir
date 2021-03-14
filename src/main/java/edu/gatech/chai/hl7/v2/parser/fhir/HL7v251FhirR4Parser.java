@@ -9,6 +9,7 @@ import javax.print.attribute.standard.JobMediaSheets;
 
 import org.apache.log4j.Logger;
 import org.hl7.fhir.instance.model.api.IBaseBundle;
+import org.hl7.fhir.r4.model.Address;
 import org.hl7.fhir.r4.model.Annotation;
 import org.hl7.fhir.r4.model.Bundle;
 import org.hl7.fhir.r4.model.Bundle.BundleEntryComponent;
@@ -51,6 +52,7 @@ import org.hl7.fhir.r4.model.Specimen;
 import org.hl7.fhir.r4.model.Specimen.SpecimenCollectionComponent;
 import org.hl7.fhir.r4.model.StringType;
 import org.hl7.fhir.r4.model.Type;
+import org.hl7.fhir.r4.model.Address.AddressUse;
 
 import ca.uhn.hl7v2.HL7Exception;
 import ca.uhn.hl7v2.model.DataTypeException;
@@ -71,10 +73,12 @@ import ca.uhn.hl7v2.model.v251.datatype.ID;
 import ca.uhn.hl7v2.model.v251.datatype.IS;
 import ca.uhn.hl7v2.model.v251.datatype.MSG;
 import ca.uhn.hl7v2.model.v251.datatype.NM;
+import ca.uhn.hl7v2.model.v251.datatype.SAD;
 import ca.uhn.hl7v2.model.v251.datatype.SN;
 import ca.uhn.hl7v2.model.v251.datatype.ST;
 import ca.uhn.hl7v2.model.v251.datatype.TS;
 import ca.uhn.hl7v2.model.v251.datatype.TX;
+import ca.uhn.hl7v2.model.v251.datatype.XAD;
 import ca.uhn.hl7v2.model.v251.datatype.XCN;
 import ca.uhn.hl7v2.model.v251.datatype.XON;
 import ca.uhn.hl7v2.model.v251.datatype.XPN;
@@ -207,11 +211,16 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 					Reference specimenReference = addToMessageBundle(bundle, specimen,
 							"urn:uuid:" + UUID.randomUUID().toString());
 
-					// Add result to diagnoticReport if exists.
+					// Add specimens to serviceRequest if exits.
+					if (serviceRequest != null) {
+						serviceRequest.addSpecimen(specimenReference);
+					}
+					
+					// Add specimens to diagnoticReport if exists.
 					if (diagnosticReport != null) {
 						diagnosticReport.addSpecimen(specimenReference);
 					}
-
+					
 				}
 			}
 
@@ -321,6 +330,68 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 				}
 				patient.setGender(adminstrativeGender);
 			}
+			
+			// PID-10 Race
+			int totalNumOfRaces = pid.getPid10_RaceReps();
+			if (totalNumOfRaces > 0) {
+				// FHIR can handle only one Race.
+				CE racePid10 = pid.getPid10_Race(0);
+				CodeableConcept raceCodeable = getCodeableConceptFromCE(racePid10);
+				Extension raceExt = new Extension();
+				raceExt.setUrl("urn:mmg:cdc-race");
+				
+				Extension raceCategoryExt = new Extension();
+				raceCategoryExt.setUrl("mmgCategory");
+				raceCategoryExt.setValue(raceCodeable.getCodingFirstRep());
+				raceExt.addExtension(raceCategoryExt);
+				
+				ST textValue = racePid10.getCe2_Text();
+				if (!textValue.isEmpty()) {
+					Extension raceTextExt = new Extension();
+					raceTextExt.setUrl("text");
+					raceTextExt.setValue(new StringType(textValue.getValue()));
+					raceExt.addExtension(raceTextExt);
+				}
+				
+				patient.addExtension(raceExt);
+			}
+			
+			// PID-11: Address
+			int totalNumOfAddresses = pid.getPid11_PatientAddressReps();
+			for (int i = 0; i < totalNumOfAddresses; i++) {
+				XAD addressPid = pid.getPid11_PatientAddress(i);
+				Address address = getAddressFromXAD(addressPid);
+				if (address != null) {
+					address.setUse(AddressUse.HOME);
+					patient.addAddress(address);
+				}
+			}
+			
+			// PID-22 Ethnicity
+			int totalNumOfEthnics = pid.getPid22_EthnicGroupReps();
+			if (totalNumOfEthnics > 0) {
+				// FHIR can handle only one Race.
+				CE ethnicPid22 = pid.getPid22_EthnicGroup(0);
+				CodeableConcept ethnicCodeable = getCodeableConceptFromCE(ethnicPid22);
+				Extension ethnicExt = new Extension();
+				ethnicExt.setUrl("urn:mmg:cdc-ethnicity");
+				
+				Extension ethnicCategoryExt = new Extension();
+				ethnicCategoryExt.setUrl("mmgCategory");
+				ethnicCategoryExt.setValue(ethnicCodeable.getCodingFirstRep());
+				ethnicExt.addExtension(ethnicCategoryExt);
+				
+				ST textValue = ethnicPid22.getCe2_Text();
+				if (!textValue.isEmpty()) {
+					Extension ethnicTextExt = new Extension();
+					ethnicTextExt.setUrl("text");
+					ethnicTextExt.setValue(new StringType(textValue.getValue()));
+					ethnicExt.addExtension(ethnicTextExt);
+				}
+				
+				patient.addExtension(ethnicExt);
+			}
+			
 		} catch (HL7Exception e) {
 			e.printStackTrace();
 		}
@@ -340,6 +411,9 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 		}
 
 		ServiceRequest serviceRequest = new ServiceRequest();
+		
+		// Set the patient.
+		serviceRequest.setSubject(new Reference(subjectReference));
 
 		// set static values.
 		serviceRequest.setStatus(ServiceRequestStatus.COMPLETED);
@@ -464,11 +538,15 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 	}
 
 	public List<Specimen> mapSpecimens(ORU_R01_ORDER_OBSERVATION orderObservation, String subjectReference) {
-		List<Specimen> retVal = new ArrayList<Specimen>();
+		List<Specimen> specimens = new ArrayList<Specimen>();
 
 		int totalNumOfSpecimens = orderObservation.getSPECIMENReps();
 		for (int i = 0; i < totalNumOfSpecimens; i++) {
 			Specimen specimen = new Specimen();
+			
+			Reference patientReference = new Reference(subjectReference);
+			specimen.setSubject(patientReference);
+			
 			ORU_R01_SPECIMEN spmSection = orderObservation.getSPECIMEN(i);
 			SPM spm = spmSection.getSPM();
 
@@ -565,12 +643,14 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 					specimen.setReceivedTime(SPMReceivedDT.getTs1_Time().getValueAsDate());
 				}
 
+				specimens.add(specimen);
+				
 			} catch (HL7Exception e) {
 				e.printStackTrace();
 			}
 		}
 
-		return retVal;
+		return specimens;
 	}
 
 	private Quantity setUnitQuantity (Quantity quantity, String system, String code, String unit) {
@@ -886,6 +966,7 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 					Extension analysisDTExt = new Extension();
 					analysisDTExt.setUrl("http://hl7.org/StructureDefinition/ext-analysisDateTime");
 					analysisDTExt.setValue(new DateTimeType(analysisTS.getTs1_Time().getValueAsDate()));
+					observation.addExtension(analysisDTExt);
 				}
 
 				// OBX-23: Performing Organization Name. In MMG lab, Name of laboratory that
@@ -952,7 +1033,7 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 									methodCodeableConcept.setText(nte3.getValue());
 									observation.setMethod(methodCodeableConcept);
 								} else {
-									allComments.concat(" " + nte3.getValue());
+									allComments = allComments.concat(" " + nte3.getValue());
 								}
 							}
 						}
@@ -1020,6 +1101,7 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 				nameTypeExt.setUrl("http://hl7.org/StructureDefinition/ext-nameType");
 				nameTypeExt.setValue(
 						new Coding("http://terminology.hl7.org/CodeSystem/v2-0204", orgNameTypeCode.getValue(), ""));
+				organization.addExtension(nameTypeExt);
 			}
 
 			// XON10: Organization Identifier
@@ -1162,7 +1244,7 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 			// xcn.14: Assigning Facility.
 			if (!xcn.getXcn14_AssigningFacility().isEmpty()) {
 				getIdentifierFromHD(identifier, xcn.getXcn14_AssigningFacility(),
-						"http://hl7.org/StructureDefinition/ext-assigningFacility");
+						"http://hl7.org/StructureDefinition/c");
 			}
 
 			// xcn.21: Professional Suffix.
@@ -1172,6 +1254,59 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 		}
 
 		return practitioner;
+	}
+	
+	private Address getAddressFromXAD(XAD xad) {
+		Address address = new Address();
+		SAD streetXad1 = xad.getXad1_StreetAddress();
+		ST cityXad3 = xad.getXad3_City();
+		ST stateXad4 = xad.getXad4_StateOrProvince();
+		ST zipXad5 = xad.getXad5_ZipOrPostalCode();
+		ID countryXad6 = xad.getXad6_Country();
+		IS censusTractXad10 = xad.getXad10_CensusTract();
+		
+		try {
+			if (!streetXad1.isEmpty()) {
+				ST streetOrMailing = streetXad1.getSad1_StreetOrMailingAddress();
+				ST street = streetXad1.getSad2_StreetName();
+				ST dwellingNumber = streetXad1.getSad3_DwellingNumber();
+				if (!streetOrMailing.isEmpty()) {
+					address.addLine(streetOrMailing.getValue());
+				} else if (!street.isEmpty()) {
+					address.addLine(street.getValue());
+				} else if (!dwellingNumber.isEmpty()) {
+					address.addLine("Dwelling Number: " + dwellingNumber.getValue());
+				}
+			}
+			
+			if (!cityXad3.isEmpty()) {
+				address.setCity(cityXad3.getValue());
+			}
+			
+			if (!stateXad4.isEmpty()) {
+				address.setState(stateXad4.getValue());
+			}
+			
+			if (!zipXad5.isEmpty()) {
+				address.setPostalCode(zipXad5.getValue());
+			}
+			
+			if (!countryXad6.isEmpty()) {
+				address.setCountry(countryXad6.getValue());
+			}
+			
+			if (!censusTractXad10.isEmpty()) {
+				Extension censusTractExt = new Extension();
+				censusTractExt.setUrl("urn:mmg:census-tract");
+				censusTractExt.setValue(new StringType(censusTractXad10.getValue()));
+				address.addExtension(censusTractExt);
+			}
+			
+		} catch (HL7Exception e) {
+			e.printStackTrace();
+		}
+		
+		return address;
 	}
 
 	private Identifier getIdentifierFromHD(Identifier identifier, HD hD, String url) {
