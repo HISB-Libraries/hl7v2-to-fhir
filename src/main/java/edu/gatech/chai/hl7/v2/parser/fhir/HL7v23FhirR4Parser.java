@@ -7,6 +7,7 @@ import java.util.UUID;
 
 import org.apache.log4j.Logger;
 import org.hl7.fhir.instance.model.api.IBaseBundle;
+import org.hl7.fhir.r4.model.Address;
 import org.hl7.fhir.r4.model.Annotation;
 import org.hl7.fhir.r4.model.Bundle;
 import org.hl7.fhir.r4.model.CodeType;
@@ -45,6 +46,7 @@ import org.hl7.fhir.r4.model.ServiceRequest;
 import org.hl7.fhir.r4.model.SimpleQuantity;
 import org.hl7.fhir.r4.model.StringType;
 import org.hl7.fhir.r4.model.Type;
+import org.hl7.fhir.r4.model.Address.AddressUse;
 
 import ca.uhn.hl7v2.HL7Exception;
 import ca.uhn.hl7v2.model.DataTypeException;
@@ -70,6 +72,7 @@ import ca.uhn.hl7v2.model.v23.segment.MSH;
 import ca.uhn.hl7v2.model.v23.segment.NTE;
 import ca.uhn.hl7v2.model.v23.segment.OBR;
 import ca.uhn.hl7v2.model.v23.segment.OBX;
+import ca.uhn.hl7v2.model.v23.datatype.XAD;
 import ca.uhn.hl7v2.model.v23.datatype.DT;
 import ca.uhn.hl7v2.model.v23.datatype.SN;
 import ca.uhn.hl7v2.model.v23.datatype.DR;
@@ -292,6 +295,44 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 				}
 				patient.setGender(adminstrativeGender);
 			}
+			
+			// PID-10 Race
+			IS racePid10 = pid.getPid10_Race();
+			if (!racePid10.isEmpty()) {
+				Extension raceExt = new Extension();
+				raceExt.setUrl("urn:mmg:cdc-race");
+				
+				String textValue = racePid10.getValue();
+				Extension raceTextExt = new Extension();
+				raceTextExt.setUrl("text");
+				raceTextExt.setValue(new StringType(textValue));
+			}
+			
+			// PID-11: Address
+			int totalNumOfAddresses = pid.getPid11_PatientAddressReps();
+			for (int i = 0; i < totalNumOfAddresses; i++) {
+				XAD addressPid = pid.getPid11_PatientAddress(i);
+				Address address = getAddressFromXAD(addressPid);
+				if (address != null) {
+					address.setUse(AddressUse.HOME);
+					patient.addAddress(address);
+				}
+			}
+
+			// PID-22 Ethnicity
+				// FHIR can handle only one Race.
+			IS ethnicPid22 = pid.getPid22_EthnicGroup();
+			if (!ethnicPid22.isEmpty()) {
+				Extension ethnicExt = new Extension();
+				ethnicExt.setUrl("urn:mmg:cdc-ethnicity");
+								
+				String textValue = ethnicPid22.getValue();
+				Extension ethnicTextExt = new Extension();
+				ethnicTextExt.setUrl("text");
+				ethnicTextExt.setValue(new StringType(textValue));
+				ethnicExt.addExtension(ethnicTextExt);
+			}
+
 		} catch (HL7Exception e) {
 			e.printStackTrace();
 		}
@@ -874,6 +915,50 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 		}
 
 		return practitioner;
+	}
+	
+	private Address getAddressFromXAD(XAD xad) {
+		Address address = new Address();
+		ST streetXad1 = xad.getXad1_StreetAddress();
+		ST cityXad3 = xad.getXad3_City();
+		ST stateXad4 = xad.getXad4_StateOrProvince();
+		ST zipXad5 = xad.getXad5_ZipOrPostalCode();
+		ID countryXad6 = xad.getXad6_Country();
+		IS censusTractXad10 = xad.getXad10_CensusTract();
+		
+		try {
+			if (!streetXad1.isEmpty()) {
+				address.addLine(streetXad1.getValue());
+			}
+			
+			if (!cityXad3.isEmpty()) {
+				address.setCity(cityXad3.getValue());
+			}
+			
+			if (!stateXad4.isEmpty()) {
+				address.setState(stateXad4.getValue());
+			}
+			
+			if (!zipXad5.isEmpty()) {
+				address.setPostalCode(zipXad5.getValue());
+			}
+			
+			if (!countryXad6.isEmpty()) {
+				address.setCountry(countryXad6.getValue());
+			}
+			
+			if (!censusTractXad10.isEmpty()) {
+				Extension censusTractExt = new Extension();
+				censusTractExt.setUrl("urn:mmg:census-tract");
+				censusTractExt.setValue(new StringType(censusTractXad10.getValue()));
+				address.addExtension(censusTractExt);
+			}
+			
+		} catch (HL7Exception e) {
+			e.printStackTrace();
+		}
+		
+		return address;
 	}
 
 	private Identifier getIdentifierFromHD(Identifier identifier, HD hD, String url) {
