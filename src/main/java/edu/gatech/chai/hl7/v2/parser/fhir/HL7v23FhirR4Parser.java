@@ -1,5 +1,7 @@
 package edu.gatech.chai.hl7.v2.parser.fhir;
 
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
@@ -9,6 +11,7 @@ import org.apache.log4j.Logger;
 import org.hl7.fhir.instance.model.api.IBaseBundle;
 import org.hl7.fhir.r4.model.Address;
 import org.hl7.fhir.r4.model.Annotation;
+import org.hl7.fhir.r4.model.Attachment;
 import org.hl7.fhir.r4.model.Bundle;
 import org.hl7.fhir.r4.model.CodeType;
 import org.hl7.fhir.r4.model.Bundle.BundleEntryComponent;
@@ -23,6 +26,7 @@ import org.hl7.fhir.r4.model.Enumerations.MessageEvent;
 import org.hl7.fhir.r4.model.HumanName.NameUse;
 import org.hl7.fhir.r4.model.HumanName;
 import org.hl7.fhir.r4.model.Identifier;
+import org.hl7.fhir.r4.model.Location;
 import org.hl7.fhir.r4.model.MessageHeader;
 import org.hl7.fhir.r4.model.MessageHeader.MessageDestinationComponent;
 import org.hl7.fhir.r4.model.MessageHeader.MessageSourceComponent;
@@ -46,6 +50,7 @@ import org.hl7.fhir.r4.model.ServiceRequest;
 import org.hl7.fhir.r4.model.SimpleQuantity;
 import org.hl7.fhir.r4.model.StringType;
 import org.hl7.fhir.r4.model.Type;
+import org.hl7.fhir.r4.model.UriType;
 import org.hl7.fhir.r4.model.Address.AddressUse;
 
 import ca.uhn.hl7v2.HL7Exception;
@@ -72,6 +77,7 @@ import ca.uhn.hl7v2.model.v23.segment.MSH;
 import ca.uhn.hl7v2.model.v23.segment.NTE;
 import ca.uhn.hl7v2.model.v23.segment.OBR;
 import ca.uhn.hl7v2.model.v23.segment.OBX;
+import ca.uhn.hl7v2.model.v23.datatype.ED;
 import ca.uhn.hl7v2.model.v23.datatype.XAD;
 import ca.uhn.hl7v2.model.v23.datatype.DT;
 import ca.uhn.hl7v2.model.v23.datatype.SN;
@@ -176,7 +182,7 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 				}
 
 				// Add Observation.
-				List<Observation> returnedObservations = mapObservations(orderObservation, patientReference);
+				List<Observation> returnedObservations = mapObservations(orderObservation, patientReference, bundle);
 				for (Observation observation : returnedObservations) {
 					Reference observationReference = addToMessageBundle(bundle, observation,
 							"urn:uuid:" + UUID.randomUUID().toString());
@@ -466,7 +472,7 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 		return diagnosticReport;
 	}
 
-	public List<Observation> mapObservations(ORU_R01_ORDER_OBSERVATION orderObservation, String subjectReference) {
+	public List<Observation> mapObservations(ORU_R01_ORDER_OBSERVATION orderObservation, String subjectReference, Bundle bundle) {
 		// Mapping Document:
 		// https://confluence.icl.gtri.org/pages/viewpage.action?pageId=22678246#NMStoFHIR(HL7v2.3toFHIR)-ForensicFormatHL7v2.3Specification
 
@@ -554,6 +560,7 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 
 				for (int j = 0; j < totalNumOfObx5; j++) {
 					Type obsValue = null;
+					boolean addFhirValue = true;
 					Varies observationValue = obx.getObx5_ObservationValue(0);
 					if (valueType.getValue().equals("NM")) {
 						// This should be valueQuantity
@@ -631,6 +638,85 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 						DT dtValue = (DT) observationValue.getData();
 
 						obsValue = new StringType(dtValue.getValue());
+					} else if (valueType.getValue().equals("ED")) {  
+						ED edValue = (ED) observationValue.getData();
+						
+						ID dataType = edValue.getEd2_TypeOfData();
+						ID encodingType = edValue.getEd4_Encoding();
+						ST data = edValue.getEd5_Data();
+						
+						Attachment attachment = new Attachment();
+						if (!dataType.isEmpty()) {
+							attachment.setContentType(dataType.getValue());
+						}
+						
+						if (!encodingType.isEmpty()) {
+							if ("Base64".equalsIgnoreCase(encodingType.getValue())) {
+								if (!data.isEmpty()) {
+									attachment.setData(data.getValue().getBytes());
+								}
+							}
+						}
+						
+						if (!attachment.isEmpty()) {
+							Extension edExt = new Extension();
+							edExt.setUrl("http://hl7.org/StructureDefinition/ext-valueAttachment");
+							edExt.setValue(attachment);
+							observation.addExtension(edExt);
+						}
+						addFhirValue = false;
+						
+					} else if (valueType.getValue().equals("CX")) {
+						// CX maps to identifier. CX does not have enough information to create
+						// organization. So, we consider this as a system in the identifier.
+						Identifier identifier = new Identifier();
+						CX cxValue = (CX) observationValue.getData();
+						ST cx1IdNum = cxValue.getCx1_ID();
+						if (!cx1IdNum.isEmpty()) {
+							identifier.setValue(cx1IdNum.getValue());
+						}
+						
+						ST cx2CheckDigit = cxValue.getCx2_CheckDigit();
+						if (!cx2CheckDigit.isEmpty()) {
+							Extension ext = new Extension();
+							ext.setUrl("http://hl7.org/StructureDefinition/ext-checkDigit");
+							ext.setValue(new StringType(cx2CheckDigit.getValue()));
+							identifier.addExtension(ext);
+						}
+
+						ID cx3CheckDigistScheme = cxValue.getCx3_CodeIdentifyingTheCheckDigitSchemeEmployed();
+						if (!cx3CheckDigistScheme.isEmpty()) {
+							Extension ext = new Extension();
+							ext.setUrl("http://hl7.org/StructureDefinition/ext-checkDigit");
+							ext.setValue(new StringType(cx3CheckDigistScheme.getValue()));
+							identifier.addExtension(ext);
+						}
+
+						HD cx4AssignAuth = cxValue.getCx4_AssigningAuthority();
+						if (!cx4AssignAuth.isEmpty()) {
+							identifier.setSystemElement(getUriFromHD(cx4AssignAuth));
+						}
+						
+						IS cx5IdTypeCode = cxValue.getCx5_IdentifierTypeCode();
+						if (!cx5IdTypeCode.isEmpty()) {
+							CodeableConcept cx5CodeableConcept = new CodeableConcept();
+							Coding cx5TypeCoding = cx5CodeableConcept.getCodingFirstRep();
+							cx5TypeCoding.setCode(cx5IdTypeCode.getValue());
+							identifier.setType(cx5CodeableConcept);
+						}
+						
+						HD cx6AssignFac = cxValue.getCx6_AssigningFacility();
+						if (cx6AssignFac.isEmpty()) {
+							Location location = getLocationFromHD(cx6AssignFac);
+							String locationRefId = "urn:uuid:" + UUID.randomUUID().toString();
+							Reference locationRef = addToMessageBundle(bundle, location, locationRefId);
+							Extension ext = new Extension();
+							ext.setUrl("http://hl7.org/StructureDefinition/ext-assigningFacility");
+							ext.setValue(locationRef);
+							identifier.addExtension(ext);
+						}
+																		
+						addFhirValue = false;
 					} else { // ST and TX - we treat both ST and TX as String
 						StringType valueString = null;
 						if (valueType.getValue().equals("ST")) {
@@ -646,14 +732,16 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 
 					// If we only have one value, we use observation.value. If more than one,
 					// we use component.
-					if (totalNumOfObx5 > 1) {
-						// Component
-						ObservationComponentComponent obsCompComp = new ObservationComponentComponent();
-						obsCompComp.setCode(observation.getCode());
-						obsCompComp.setValue(obsValue);
-						observation.addComponent(obsCompComp);
-					} else {
-						observation.setValue(obsValue);
+					if (addFhirValue == true) {
+						if (totalNumOfObx5 > 1) {
+							// Component
+							ObservationComponentComponent obsCompComp = new ObservationComponentComponent();
+							obsCompComp.setCode(observation.getCode());
+							obsCompComp.setValue(obsValue);
+							observation.addComponent(obsCompComp);
+						} else {
+							observation.setValue(obsValue);
+						}
 					}
 				}
 
@@ -891,8 +979,8 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 			// xcn.9 : Assigning Authority. In MMG Lab, The physician / provider who ordered
 			// the test
 			if (!xcn.getXcn9_AssigningAuthority().isEmpty()) {
-				getIdentifierFromHD(identifier, xcn.getXcn9_AssigningAuthority(),
-						"http://hl7.org/StructureDefinition/ext-assigningauthority");
+				identifier.addExtension(getExtensionFromHD(xcn.getXcn9_AssigningAuthority(),
+						"http://hl7.org/StructureDefinition/ext-assigningauthority"));
 			}
 
 			// xcn.13: Identifier Type Code.
@@ -904,8 +992,8 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 
 			// xcn.14: Assigning Facility.
 			if (!xcn.getXcn14_AssigningFacilityID().isEmpty()) {
-				getIdentifierFromHD(identifier, xcn.getXcn14_AssigningFacilityID(),
-						"http://hl7.org/StructureDefinition/ext-assigningFacility");
+				identifier.addExtension(getExtensionFromHD(xcn.getXcn14_AssigningFacilityID(),
+						"http://hl7.org/StructureDefinition/ext-assigningFacility"));
 			}
 
 			// xcn.21: Professional Suffix.
@@ -960,14 +1048,84 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 		
 		return address;
 	}
+	
+	private Location getLocationFromHD(HD hD) {
+		Location location = new Location();
+		try {
+			if (!hD.isEmpty()) {
+				IS hd_1 = hD.getHd1_NamespaceID();
+				ST hd_2 = hD.getHd2_UniversalID();
+				ID hd_3 = hD.getHd3_UniversalIDType();
+				
+				if (!hd_1.isEmpty()) {
+					location.setName(hd_1.getValue());
+				}
+				
+				if (!hd_2.isEmpty()) {
+					Identifier locationIdentifier = new Identifier();
+					if ("ISO".equals(hd_3.getValue())) {
+						locationIdentifier.setValue("urn:oid:" + hd_2.getValue());
+					} else if ("UUID".equals(hd_3.getValue())) {
+						locationIdentifier.setValue("urn:uuid:" + hd_2.getValue());						
+					} else {
+						CodeableConcept phyCodeableConcept = location.getPhysicalType(); 
+						Coding phyCoding = phyCodeableConcept.getCodingFirstRep();
+						phyCoding.setCode("si");
+						phyCoding.setSystem("http://terminology.hl7.org/CodeSystem/location-physical-type");
+						location.setPhysicalType(phyCodeableConcept);
 
-	private Identifier getIdentifierFromHD(Identifier identifier, HD hD, String url) {
-		if (identifier == null) {
-			identifier = new Identifier();
+						locationIdentifier.setValue(hd_2.getValue());						
+					}
+					
+					if (!locationIdentifier.isEmpty()) {
+						location.addIdentifier(locationIdentifier);
+					}
+				}
+			}
+		} catch (HL7Exception e) {
+			e.printStackTrace();
+		}	
+		
+		return location;
+	}
+	
+	private UriType getUriFromHD(HD hD) {
+		UriType uriType = new UriType();
+		
+		try {
+			if (!hD.isEmpty()) {
+				IS hd_1 = hD.getHd1_NamespaceID();
+				ST hd_2 = hD.getHd2_UniversalID();
+				ID hd_3 = hD.getHd3_UniversalIDType();
+
+				if ("ISO".equals(hd_3.getValue())) {
+					if (hd_1.isEmpty()) {
+						uriType.setValue("urn:oid:" + hd_2.getValue());
+					} else {
+						uriType.setValue("urn:mmg:id:" + hd_1.getValue() + ":" + hd_2.getValue());
+					}
+				} else if ("UUID".equals(hd_3.getValue())) {
+					if (hd_1.isEmpty()) {
+						uriType.setValue("urn:uuid:" + hd_2.getValue());
+					} else {
+						uriType.setValue("urn:mmg:id:" + hd_1.getValue() + ":" + hd_2.getValue());
+					}
+				} else {
+					uriType.setValue("urn:mmg:id:" + hd_1.getValue() + ":" + hd_2.getValue() + ":" + hd_3.getValue());
+				}
+			}
+		} catch (HL7Exception e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
 		}
+		
+		return uriType;
+	}
+
+	private Extension getExtensionFromHD(HD hD, String url) {
+		Extension extension = new Extension();
 
 		try {
-			Extension extension = new Extension();
 			extension.setUrl(url);
 
 			if (!hD.isEmpty()) {
@@ -997,13 +1155,11 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 				}
 			}
 
-			identifier.addExtension(extension);
-
 		} catch (HL7Exception e) {
 			e.printStackTrace();
 		}
 
-		return identifier;
+		return extension;
 	}
 
 	private Identifier getIdentifierFromEI(EI eI, String typeSystem, String typeCode) {
