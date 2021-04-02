@@ -104,6 +104,7 @@ import ca.uhn.hl7v2.model.v251.segment.OBR;
 import ca.uhn.hl7v2.model.v251.segment.OBX;
 import ca.uhn.hl7v2.model.v251.segment.PID;
 import ca.uhn.hl7v2.model.v251.segment.SPM;
+import edu.gatech.chai.hl7.v2.parser.fhir.utilities.StateFIPSCodes;
 import edu.gatech.chai.hl7.v2.parser.fhir.utilities.V2FHIRCodeSystem;
 
 public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
@@ -850,12 +851,15 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 				// OBX-4: Observation Sub-ID. In MMG lab, Distinguishes
 				// between multiple OBX segments with the same observation ID organized
 				// under one OBR.
-				// Note by GTRI: All OBX will be added to the result section of diagnostic
-				// report.
-				// There will be no issue with Observation ID in FHIR as it will assigned
-				// with unique one by FHIR server. Thus, keeping this in the result of
-				// diagnostic report should be sufficient.
-
+				// In MMG this is a sub-id for multipble OBXes. 
+				ST obx4 = obx.getObx4_ObservationSubID();
+				if (!obx4.isEmpty()) {
+					Extension subIdExt = new Extension();
+					subIdExt.setUrl("urn:hl7v2:obsSubID");
+					subIdExt.setValue(new StringType(obx4.getValue()));
+					observation.addExtension(subIdExt);
+				}
+				
 				// OBX-6: Units. If we have OBX-6 value, it means the value is Quantity.
 				// However, value type will choose the FHIR data type. We just parse
 				// OBX-6 first so that we have this unit available for all v2 type need
@@ -1522,7 +1526,12 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 			}
 			
 			if (!stateXad4.isEmpty()) {
-				address.setState(stateXad4.getValue());
+				String state2Letter = StateFIPSCodes.get2LetterFromFips(stateXad4.getValue());
+				if (state2Letter.isEmpty()) {
+					state2Letter = stateXad4.getValue();
+				}
+				
+				address.setState(state2Letter);
 			}
 			
 			if (!zipXad5.isEmpty()) {
