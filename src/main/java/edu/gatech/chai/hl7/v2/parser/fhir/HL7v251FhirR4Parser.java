@@ -718,7 +718,7 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 				for (int j = 0; j < totalNumOfRoles; j++) {
 					CWE spmRole = spm.getSpm11_SpecimenRole(j);
 					Extension roleExtension = new Extension();
-					roleExtension.setUrl("http://hl7.org/StructureDefinition/ext-specimenRole");
+					roleExtension.setUrl("urn:v2-to-fhir:specimenRole");
 					CodeableConcept roleCodeable = getCodeableConceptFromCWE(spmRole);
 					roleExtension.setValue(roleCodeable.getCodingFirstRep());
 
@@ -997,7 +997,7 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 						
 						if (!attachment.isEmpty()) {
 							Extension edExt = new Extension();
-							edExt.setUrl("http://hl7.org/StructureDefinition/ext-valueAttachment");
+							edExt.setUrl("urn:v2-to-fhir:valueAttachment");
 							edExt.setValue(attachment);
 							observation.addExtension(edExt);
 						}
@@ -1016,7 +1016,7 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 						ST cx2CheckDigit = cxValue.getCx2_CheckDigit();
 						if (!cx2CheckDigit.isEmpty()) {
 							Extension ext = new Extension();
-							ext.setUrl("http://hl7.org/StructureDefinition/ext-checkDigit");
+							ext.setUrl("urn:v2-to-fhir:checkDigit");
 							ext.setValue(new StringType(cx2CheckDigit.getValue()));
 							identifier.addExtension(ext);
 						}
@@ -1024,7 +1024,7 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 						ID cx3CheckDigistScheme = cxValue.getCx3_CheckDigitScheme();
 						if (!cx3CheckDigistScheme.isEmpty()) {
 							Extension ext = new Extension();
-							ext.setUrl("http://hl7.org/StructureDefinition/ext-checkDigit");
+							ext.setUrl("urn:v2-to-fhir:checkDigit");
 							ext.setValue(new StringType(cx3CheckDigistScheme.getValue()));
 							identifier.addExtension(ext);
 						}
@@ -1046,7 +1046,7 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 						if (!cx6AssignFac.isEmpty()) {
 							UriType facUri = getUriFromHD(cx6AssignFac);
 							Extension ext = new Extension();
-							ext.setUrl("http://hl7.org/StructureDefinition/ext-assigningFacility");
+							ext.setUrl("urn:v2-to-fhir:assigningFacility");
 							ext.setValue(facUri);
 							identifier.addExtension(ext);
 						}
@@ -1198,7 +1198,7 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 				TS analysisTS = obx.getObx19_DateTimeOfTheAnalysis();
 				if (!analysisTS.isEmpty()) {
 					Extension analysisDTExt = new Extension();
-					analysisDTExt.setUrl("http://hl7.org/StructureDefinition/ext-analysisDateTime");
+					analysisDTExt.setUrl("urn:v2-to-fhir:analysisDateTime");
 					analysisDTExt.setValue(new DateTimeType(analysisTS.getTs1_Time().getValueAsDate()));
 					observation.addExtension(analysisDTExt);
 				}
@@ -1258,7 +1258,7 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 						ID sourceOfCommentID = nte.getNte2_SourceOfComment();
 						if (!sourceOfCommentID.isEmpty()) {
 							Extension sourceOfCommentExt = new Extension();
-							sourceOfCommentExt.setUrl("http://hl7.org/StructureDefinition/ext-sourceOfComment");
+							sourceOfCommentExt.setUrl("urn:v2-to-fhir:sourceOfComment");
 							sourceOfCommentExt.setValue(new Coding("http://terminology.hl7.org/CodeSystem/v2-0105",
 									sourceOfCommentID.getValue(), ""));
 							annotation.addExtension(sourceOfCommentExt);
@@ -1285,7 +1285,7 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 						if (!commentTypeCE.isEmpty()) {
 							CodeableConcept commentTypeCodeable = getCodeableConceptFromCE(commentTypeCE);
 							Extension commentTypeExt = new Extension();
-							commentTypeExt.setUrl("http://hl7.org/StructureDefinition/ext-noteType");
+							commentTypeExt.setUrl("urn:v2-to-fhir:noteType");
 							commentTypeExt.setValue(commentTypeCodeable.getCodingFirstRep());
 							annotation.addExtension(commentTypeExt);
 						}
@@ -1341,7 +1341,7 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 			IS orgNameTypeCode = xon.getXon2_OrganizationNameTypeCode();
 			if (!orgNameTypeCode.isEmpty()) {
 				Extension nameTypeExt = new Extension();
-				nameTypeExt.setUrl("http://hl7.org/StructureDefinition/ext-nameType");
+				nameTypeExt.setUrl("urn:v2-to-fhir:nameType");
 				nameTypeExt.setValue(
 						new Coding("http://terminology.hl7.org/CodeSystem/v2-0204", orgNameTypeCode.getValue(), ""));
 				organization.addExtension(nameTypeExt);
@@ -1368,7 +1368,7 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 			Identifier assignAuthIdentifier = null;
 			if (!assignAuthHD.isEmpty()) {
 				assignAuthIdentifier = new Identifier();
-				assignAuthIdentifier.addExtension(getExtensionFromHD(assignAuthHD, "http://hl7.org/StructureDefinition/ext-assigningauthority"));
+				assignAuthIdentifier.addExtension(getExtensionFromHD(assignAuthHD, "urn:v2-to-fhir:assigningauthority"));
 				organization.addIdentifier(assignAuthIdentifier);
 			}
 
@@ -1473,7 +1473,7 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 			// the test
 			if (!xcn.getXcn9_AssigningAuthority().isEmpty()) {
 				identifier.addExtension(getExtensionFromHD(xcn.getXcn9_AssigningAuthority(),
-						"http://hl7.org/StructureDefinition/ext-assigningauthority"));
+						"urn:v2-to-fhir:assigningauthority"));
 			}
 
 			// xcn.13: Identifier Type Code.
@@ -1486,7 +1486,7 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 			// xcn.14: Assigning Facility.
 			if (!xcn.getXcn14_AssigningFacility().isEmpty()) {
 				identifier.addExtension(getExtensionFromHD(xcn.getXcn14_AssigningFacility(),
-						"http://hl7.org/StructureDefinition/ext-assigningFacility"));
+						"urn:v2-to-fhir:assigningFacility"));
 			}
 
 			// xcn.21: Professional Suffix.
@@ -1710,7 +1710,7 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 				}
 
 				if (!eIExtension.isEmpty()) {
-					eIExtension.setUrl("http://hl7.org/StructureDefinition/ext-assigningauthority");
+					eIExtension.setUrl("urn:v2-to-fhir:assigningauthority");
 
 					identifier.addExtension(eIExtension);
 				}
@@ -1888,7 +1888,7 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 			int totalNumOfMsh21 = msh.getMsh21_MessageProfileIdentifierReps();
 			for (int i = 0; i < totalNumOfMsh21; i++) {
 				Extension msgProfileExt = new Extension();
-				msgProfileExt.setUrl("http://hl7.org/StructureDefinition/ext-messageProfile");
+				msgProfileExt.setUrl("urn:v2-to-fhir:messageProfile");
 				eventCoding.addExtension(msgProfileExt);
 				
 				EI msh21 = msh.getMsh21_MessageProfileIdentifier(i);
@@ -2033,7 +2033,7 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 			int totalNumOfMsh21 = msh.getMsh21_MessageProfileIdentifierReps();
 			for (int i = 0; i < totalNumOfMsh21; i++) {
 				Extension msgProfileExt = new Extension();
-				msgProfileExt.setUrl("http://hl7.org/StructureDefinition/ext-messageProfile");
+				msgProfileExt.setUrl("urn:v2-to-fhir:messageProfile");
 				typeCodeable.addExtension(msgProfileExt);
 				
 				EI msh21 = msh.getMsh21_MessageProfileIdentifier(i);
