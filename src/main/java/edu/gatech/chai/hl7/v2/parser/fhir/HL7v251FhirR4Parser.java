@@ -134,7 +134,7 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 		bundleEntry.setFullUrl(resourceFullUrl);
 
 		ret = new Reference(resourceFullUrl);
-		messageHeader.addFocus(ret);
+		// messageHeader.addFocus(ret);
 		
 		// Add composition section entry
 		SectionComponent compositionSection = composition.getSectionFirstRep();
@@ -221,17 +221,40 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 			 * Each PATIENT_RESULT generates one Message Bundle. This message bundle will be
 			 * sent or written separately.
 			 */
-			Bundle bundle = new Bundle();
-			bundle.setType(Bundle.BundleType.MESSAGE);
-			bundle.setId(UUID.randomUUID().toString());
+			Bundle messageBundle = new Bundle();
+			messageBundle.setType(Bundle.BundleType.MESSAGE);
+			messageBundle.setId(UUID.randomUUID().toString());
+			messageBundle.setTimestamp(new Date());
 
+			// set up message header ID and bundle entry with fullURL
+			String messageHeaderId = UUID.randomUUID().toString();
+			messageHeader.setId(messageHeaderId);
 			BundleEntryComponent bundleEntryMessageHeader = new BundleEntryComponent();
 			bundleEntryMessageHeader.setResource(messageHeader);
-			bundle.addEntry(bundleEntryMessageHeader);
+			bundleEntryMessageHeader.setFullUrl("urn:uuid:" + messageHeaderId);
+			messageBundle.addEntry(bundleEntryMessageHeader);
 
+			// Document bundle - this is main bundle. Add this to messageBundle.entry
+			Bundle documentBundle = new Bundle();
+			documentBundle.setType(Bundle.BundleType.DOCUMENT);
+			String documenteBundleId = UUID.randomUUID().toString();
+			documentBundle.setId(documenteBundleId);
+			documentBundle.setTimestamp(new Date());
+			BundleEntryComponent bundleEntryDocument = new BundleEntryComponent();
+			bundleEntryDocument.setResource(documentBundle);
+			bundleEntryDocument.setFullUrl("urn:uuid:" + documenteBundleId);
+
+			// add document bundle reference to messageHeader.focus. And, Document resource to message bundle entry 
+			messageHeader.addFocus(new Reference("urn:uuid:" + documenteBundleId));
+			messageBundle.addEntry(bundleEntryDocument);
+
+			// set up composition id and bundle entry with full URL
+			String compositionId = UUID.randomUUID().toString();
+			composition.setId(compositionId);
 			BundleEntryComponent bundleEntryComposition = new BundleEntryComponent();
 			bundleEntryComposition.setResource(composition);
-			bundle.addEntry(bundleEntryComposition);
+			bundleEntryComposition.setFullUrl("urn:uuid:" + compositionId);
+			documentBundle.addEntry(bundleEntryComposition);
 
 			ORU_R01_PATIENT_RESULT patientResult = oruR01Message.getPATIENT_RESULT(i);
 
@@ -242,7 +265,7 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 				if (patientExist == null) {
 					// Save this patientReference for a future use
 					patientReference = "urn:uuid:" + UUID.randomUUID().toString();
-					addToBundle(bundle, subject, patientReference);
+					addToBundle(documentBundle, subject, patientReference);
 				} else {
 					patientReference = "urn:uuid:" + patientExist.getIdElement().getIdPart();
 					subject = patientExist;
@@ -264,7 +287,7 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 				if (diagnosticReport != null) {
 					DiagnosticReport diagnosticReportExist = (DiagnosticReport) exists(diagnosticReport, diagnosticReport.getIdentifier());
 					if (diagnosticReportExist == null) {
-						addToBundle(bundle, diagnosticReport, "urn:uuid:" + UUID.randomUUID().toString());
+						addToBundle(documentBundle, diagnosticReport, "urn:uuid:" + UUID.randomUUID().toString());
 						
 						// TODO: This diagnostic report may need to be inserted to another bundle like document.
 					} else {
@@ -279,7 +302,7 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 				if (diagnosticReport != null) {
 					ServiceRequest serviceRequestExist = (ServiceRequest) exists(serviceRequest, serviceRequest.getIdentifier());
 					if (serviceRequestExist == null) {
-						serviceRequestReference = addToBundle(bundle, serviceRequest,
+						serviceRequestReference = addToBundle(documentBundle, serviceRequest,
 								"urn:uuid:" + UUID.randomUUID().toString());
 						diagnosticReport.addBasedOn(serviceRequestReference);
 					} else {
@@ -301,19 +324,19 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 					Practitioner practitioner = getPractitionerFromXCN(orderingProvider, patientReference);	
 					Practitioner practitionerExist = (Practitioner) exists(practitioner, practitioner.getIdentifier());
 					if (practitionerExist == null) {
-						Reference practitionerReference = addToBundle(bundle, practitioner,
+						Reference practitionerReference = addToBundle(documentBundle, practitioner,
 								"urn:uuid:" + UUID.randomUUID().toString());
 						serviceRequest.setRequester(practitionerReference);
 					}
 				}
 
 				// Add Observation.
-				List<Observation> returnedObservations = mapObservations(orderObservation, patientReference, bundle);
+				List<Observation> returnedObservations = mapObservations(orderObservation, patientReference, documentBundle);
 				for (Observation observation : returnedObservations) {
 					Reference observationReference = null;
 					Observation observationExist = (Observation) exists(observation, observation.getIdentifier());
 					if (observationExist == null) {
-						observationReference = addToBundle(bundle, observation,
+						observationReference = addToBundle(documentBundle, observation,
 								"urn:uuid:" + UUID.randomUUID().toString());
 						// Add result to diagnoticReport if exists.
 						if (diagnosticReport != null) {
@@ -328,7 +351,7 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 					Specimen specimenExist = (Specimen) exists(specimen, specimen.getIdentifier());
 					Reference specimenReference = null;
 					if (specimenExist == null) {
-						specimenReference = addToBundle(bundle, specimen,
+						specimenReference = addToBundle(documentBundle, specimen,
 								"urn:uuid:" + UUID.randomUUID().toString());
 						
 						// Add specimens to serviceRequest if exits.
@@ -346,7 +369,7 @@ public class HL7v251FhirR4Parser extends BaseHL7v2FHIRParser {
 				}
 			}
 
-			bundles.add(bundle);
+			bundles.add(messageBundle);
 		}
 
 		return bundles;
