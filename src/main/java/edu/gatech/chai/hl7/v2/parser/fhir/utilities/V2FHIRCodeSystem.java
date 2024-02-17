@@ -6,6 +6,7 @@ public enum V2FHIRCodeSystem {
 	ICD9CM("I9C", "http://hl7.org/fhir/sid/icd-9-cm"),
 	ISBT("IBT", "ISBT"),
 	LN("LN", "http://loinc.org"),
+	L("L", "urn:local:general-code"),
 	NDC("NDC", "http://hl7.org/fhir/sid/ndc"),
 	SCT("SCT", "http://snomed.info/sct"),
 	SCTMMG("SCT", "http://snomed.info/sct"),
@@ -49,6 +50,8 @@ public enum V2FHIRCodeSystem {
 			fhirCodeSystem = ISBT.getFhirCodeSystem();			
 		} else if (LN.getV2CodeSystem().equals(v2CodeSystem)) {
 			fhirCodeSystem = LN.getFhirCodeSystem();			
+		} else if (L.getV2CodeSystem().equals(v2CodeSystem)) {
+			fhirCodeSystem = L.getFhirCodeSystem();			
 		} else if (NDC.getV2CodeSystem().equals(v2CodeSystem)) {
 			fhirCodeSystem = NDC.getFhirCodeSystem();			
 		} else if (SCT.getV2CodeSystem().equals(v2CodeSystem)) {
