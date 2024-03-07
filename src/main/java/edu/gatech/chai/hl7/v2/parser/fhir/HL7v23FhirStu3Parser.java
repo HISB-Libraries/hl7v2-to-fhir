@@ -4,8 +4,8 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.UUID;
+import java.util.logging.Logger;
 
-import org.apache.log4j.Logger;
 import org.hl7.fhir.dstu3.model.Bundle;
 import org.hl7.fhir.dstu3.model.CodeableConcept;
 import org.hl7.fhir.dstu3.model.Coding;
@@ -379,7 +379,7 @@ public class HL7v23FhirStu3Parser extends BaseHL7v2FHIRParser {
 							// Record coming over is a correction and thus replaces a final result.
 							observation.setStatus(ObservationStatus.PRELIMINARY);
 						} else {
-							LOGGER.fatal(
+							LOGGER.severe(
 									"OBX received with status = " + hl7Status + ". (Table:" + obx11.getTable() + ")");
 							continue;
 						}

@@ -8,14 +8,14 @@
 	<artifactId>hl7v2-to-fhir</artifactId>
 
 	<packaging>jar</packaging>
-	<version>1.1.0</version>
+	<version>1.1.1</version>
 
 	<name>hl7v2-to-fhir</name>
 	<description>HL7v2 to FHIR conversion library</description>
 	<url>http://maven.apache.org</url>
 
 	<properties>
-		<hapi_fhir_stable_version>6.8.2</hapi_fhir_stable_version>
+		<hapi_fhir_stable_version>7.0.0</hapi_fhir_stable_version>
 		<hapi_v2_stable_version>2.5.1</hapi_v2_stable_version>
 
 		<!-- configure timestamp in MANIFEST.MF for maven-war-provider -->
@@ -26,11 +26,6 @@
 	</properties>
 
 	<dependencies>
-		<dependency>
-			<groupId>log4j</groupId>
-			<artifactId>log4j</artifactId>
-			<version>1.2.17</version>
-		</dependency>
 		<dependency>
 			<groupId>org.slf4j</groupId>
 			<artifactId>slf4j-simple</artifactId>
