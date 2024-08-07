@@ -1,5 +1,7 @@
 package edu.gatech.chai.hl7.v2.parser.fhir;
 
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
@@ -16,12 +18,16 @@ import org.hl7.fhir.r4.model.Bundle.BundleEntryComponent;
 import org.hl7.fhir.r4.model.DiagnosticReport.DiagnosticReportStatus;
 import org.hl7.fhir.r4.model.CodeableConcept;
 import org.hl7.fhir.r4.model.Coding;
+import org.hl7.fhir.r4.model.Composition;
+import org.hl7.fhir.r4.model.Composition.CompositionStatus;
+import org.hl7.fhir.r4.model.Composition.SectionComponent;
 import org.hl7.fhir.r4.model.DateTimeType;
 import org.hl7.fhir.r4.model.DiagnosticReport;
 import org.hl7.fhir.r4.model.Extension;
 import org.hl7.fhir.r4.model.Enumerations.AdministrativeGender;
 import org.hl7.fhir.r4.model.Enumerations.MessageEvent;
 import org.hl7.fhir.r4.model.HumanName.NameUse;
+import org.hl7.fhir.r4.model.IdType;
 import org.hl7.fhir.r4.model.HumanName;
 import org.hl7.fhir.r4.model.Identifier;
 import org.hl7.fhir.r4.model.Location;
@@ -89,26 +95,100 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 	final static Logger LOGGER = Logger.getLogger(HL7v23FhirR4Parser.class.getName());
 
 	MessageHeader messageHeader = null;
+	Composition composition = null;
+
+	List<Resource> resources;
 
 	private void initialize(Message msg) {
 		mapMessageHeader((ca.uhn.hl7v2.model.v23.message.ORU_R01) msg);
+		mapComposition((ca.uhn.hl7v2.model.v23.message.ORU_R01) msg);
 	}
 
 	public HL7v23FhirR4Parser() {
 	}
 
-	private Reference addToMessageBundle(Bundle bundle, Resource resource, String resourceFullUrl) {
+	private Reference addToBundle(Bundle bundle, Resource resource, String resourceFullUrl) {
 		Reference ret;
 
-		BundleEntryComponent bundleEntryPatient = new BundleEntryComponent();
-		bundleEntryPatient.setResource(resource);
-		bundleEntryPatient.setFullUrl(resourceFullUrl);
+		resource.setId(new IdType(resourceFullUrl.substring(9)));
+
+		BundleEntryComponent bundleEntry = new BundleEntryComponent();
+		bundleEntry.setResource(resource);
+		bundleEntry.setFullUrl(resourceFullUrl);
 
 		ret = new Reference(resourceFullUrl);
-		messageHeader.addFocus(ret);
-		bundle.addEntry(bundleEntryPatient);
+		// messageHeader.addFocus(ret);
+
+		// Add composition section entry
+		SectionComponent compositionSection = composition.getSectionFirstRep();
+		compositionSection.addEntry(ret);
+
+		bundle.addEntry(bundleEntry);
+
+		resources.add(resource);
 
 		return ret;
+	}
+
+	private boolean areIdentifiersSame(List<Identifier> ids1, List<Identifier> ids2) {
+		if (ids1.size() == 0 || ids2.size() == 0) {
+			return false;
+		}
+
+		for (Identifier id1 : ids1) {
+			List<Coding> codings1 = id1.getType().getCoding();
+			for (Coding coding1 : codings1) {
+				for (Identifier id2 : ids2) {
+					List<Coding> codings2 = id2.getType().getCoding();
+					for (Coding coding2 : codings2) {
+						if ((coding1.getSystem() == null && coding2.getSystem() == null) ||
+								coding1.getSystem().equals(coding2.getSystem()) &&
+										(coding1.getCode() == null && coding2.getCode() == null)
+								||
+								coding1.getCode().equals(coding2.getCode())) {
+							if (id1.getValue().equals(id2.getValue())) {
+								return true;
+							}
+						}
+					}
+				}
+			}
+
+			if (codings1.size() == 0) {
+				for (Identifier id2 : ids2) {
+					if (id2.getType().getCoding().size() == 0) {
+						if (id1.getValue().equals(id2.getValue())) {
+							return true;
+						}
+					}
+				}
+			}
+		}
+
+		return false;
+	}
+
+	private Resource exists(Resource resource, List<Identifier> identifierResource) {
+		for (Resource resourceExist : resources) {
+			if (resourceExist.getClass().isInstance(resource)) {
+				Method getIdentifierMethod;
+				try {
+					getIdentifierMethod = resourceExist.getClass().getMethod("getIdentifier");
+
+					@SuppressWarnings("unchecked")
+					List<Identifier> identifiersExist = (List<Identifier>) getIdentifierMethod.invoke(resourceExist);
+
+					if (areIdentifiersSame(identifierResource, identifiersExist)) {
+						return resourceExist;
+					}
+				} catch (NoSuchMethodException | SecurityException | IllegalAccessException | IllegalArgumentException
+						| InvocationTargetException e) {
+					e.printStackTrace();
+				}
+			}
+		}
+
+		return null;
 	}
 
 	public List<IBaseBundle> executeParser(Message msg) {
@@ -118,6 +198,7 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 
 		// First clear up the list.
 		initialize(msg);
+		resources = new ArrayList<Resource>();
 
 		int numberOfResponses = oruR01Message.getRESPONSEReps();
 		for (int i = 0; i < numberOfResponses; i++) {
@@ -125,24 +206,62 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 			 * Each PATIENT_RESULT generates one Message Bundle. This message bundle will be
 			 * sent or written separately.
 			 */
-			Bundle bundle = new Bundle();
-			bundle.setType(Bundle.BundleType.MESSAGE);
+			Bundle messageBundle = new Bundle();
+			messageBundle.setType(Bundle.BundleType.MESSAGE);
+			messageBundle.setId(UUID.randomUUID().toString());
+			messageBundle.setTimestamp(new Date());
 
+			// set up message header ID and bundle entry with fullURL
+			String messageHeaderId = UUID.randomUUID().toString();
+			messageHeader.setId(messageHeaderId);
 			BundleEntryComponent bundleEntryMessageHeader = new BundleEntryComponent();
 			bundleEntryMessageHeader.setResource(messageHeader);
-			bundle.addEntry(bundleEntryMessageHeader);
+			bundleEntryMessageHeader.setFullUrl("urn:uuid:" + messageHeaderId);
+			messageBundle.addEntry(bundleEntryMessageHeader);
+
+			// Document bundle - this is main bundle. Add this to messageBundle.entry
+			Bundle documentBundle = new Bundle();
+			documentBundle.setType(Bundle.BundleType.DOCUMENT);
+			String documenteBundleId = UUID.randomUUID().toString();
+			documentBundle.setId(documenteBundleId);
+			documentBundle.setTimestamp(new Date());
+			BundleEntryComponent bundleEntryDocument = new BundleEntryComponent();
+			bundleEntryDocument.setResource(documentBundle);
+			bundleEntryDocument.setFullUrl("urn:uuid:" + documenteBundleId);
+
+			// add document bundle reference to messageHeader.focus. And, Document resource
+			// to message bundle entry
+			messageHeader.addFocus(new Reference("urn:uuid:" + documenteBundleId));
+			messageBundle.addEntry(bundleEntryDocument);
+
+			// set up composition id and bundle entry with full URL
+			String compositionId = UUID.randomUUID().toString();
+			composition.setId(compositionId);
+			BundleEntryComponent bundleEntryComposition = new BundleEntryComponent();
+			bundleEntryComposition.setResource(composition);
+			bundleEntryComposition.setFullUrl("urn:uuid:" + compositionId);
+			documentBundle.addEntry(bundleEntryComposition);
 
 			ORU_R01_RESPONSE patientResult = oruR01Message.getRESPONSE(i);
 
 			subject = mapPatients(patientResult);
 			String patientReference = null;
 			if (subject != null) {
-				patientReference = "urn:uuid:" + UUID.randomUUID().toString();
-				addToMessageBundle(bundle, subject, patientReference);
+				Patient patientExist = (Patient) exists(subject, subject.getIdentifier());
+				if (patientExist == null) {
+					// Save this patientReference for a future use
+					patientReference = "urn:uuid:" + UUID.randomUUID().toString();
+					addToBundle(documentBundle, subject, patientReference);
+				} else {
+					patientReference = "urn:uuid:" + patientExist.getIdElement().getIdPart();
+					subject = patientExist;
+				}
 			} else {
 				// We must have a patient.
 				return null;
 			}
+
+			composition.setSubject(new Reference(patientReference));
 
 			// For each message bundle, add diagnostic report, observations, specimens.
 			int totalNumOfOrderObservation = patientResult.getORDER_OBSERVATIONReps();
@@ -152,16 +271,36 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 				// Add DiagnosticReport
 				DiagnosticReport diagnosticReport = mapDiagnosticReport(orderObservation, patientReference);
 				if (diagnosticReport != null) {
-					addToMessageBundle(bundle, diagnosticReport, "urn:uuid:" + UUID.randomUUID().toString());
+					DiagnosticReport diagnosticReportExist = (DiagnosticReport) exists(diagnosticReport,
+							diagnosticReport.getIdentifier());
+					if (diagnosticReportExist == null) {
+						addToBundle(documentBundle, diagnosticReport, "urn:uuid:" + UUID.randomUUID().toString());
+
+						// TODO: This diagnostic report may need to be inserted to another bundle like
+						// document.
+					} else {
+						// overwrite the diagnosticReport with existing one.
+						diagnosticReport = diagnosticReportExist;
+					}
 				}
 
 				// Create ServiceRequest here.
 				ServiceRequest serviceRequest = mapServiceRequest(orderObservation, patientReference);
 				Reference serviceRequestReference = null;
 				if (diagnosticReport != null) {
-					serviceRequestReference = addToMessageBundle(bundle, serviceRequest,
-							"urn:uuid:" + UUID.randomUUID().toString());
-					diagnosticReport.addBasedOn(serviceRequestReference);
+					ServiceRequest serviceRequestExist = (ServiceRequest) exists(serviceRequest,
+							serviceRequest.getIdentifier());
+					if (serviceRequestExist == null) {
+						serviceRequestReference = addToBundle(documentBundle, serviceRequest,
+								"urn:uuid:" + UUID.randomUUID().toString());
+						diagnosticReport.addBasedOn(serviceRequestReference);
+					} else {
+						// Overwrite the serviceRequest with this existing one as this serviceRequest is
+						// used in other places.
+						serviceRequest = serviceRequestExist;
+						serviceRequestReference = new Reference(
+								"urn:uuid:" + serviceRequestExist.getIdElement().getIdPart());
+					}
 				}
 
 				// Add Practitioner (for ordering provider).
@@ -173,30 +312,37 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 				if (totalNumOfOrderingPartner > 0) {
 					XCN orderingProvider = orderObservation.getOBR().getObr16_OrderingProvider(0);
 					Practitioner practitioner = getPractitionerFromXCN(orderingProvider, patientReference);
-					Reference practitionerReference = addToMessageBundle(bundle, practitioner,
-							"urn:uuid:" + UUID.randomUUID().toString());
-
-					serviceRequest.setRequester(practitionerReference);
+					Practitioner practitionerExist = (Practitioner) exists(practitioner, practitioner.getIdentifier());
+					if (practitionerExist == null) {
+						Reference practitionerReference = addToBundle(documentBundle, practitioner,
+								"urn:uuid:" + UUID.randomUUID().toString());
+						serviceRequest.setRequester(practitionerReference);
+					}
 				}
 
 				// Add Observation.
-				List<Observation> returnedObservations = mapObservations(orderObservation, patientReference, bundle);
+				List<Observation> returnedObservations = mapObservations(orderObservation, patientReference,
+						documentBundle);
 				for (Observation observation : returnedObservations) {
-					Reference observationReference = addToMessageBundle(bundle, observation,
-							"urn:uuid:" + UUID.randomUUID().toString());
-
-					// Add result to diagnoticReport if exists.
-					if (diagnosticReport != null) {
-						diagnosticReport.addResult(observationReference);
+					Reference observationReference = null;
+					Observation observationExist = (Observation) exists(observation, observation.getIdentifier());
+					if (observationExist == null) {
+						observationReference = addToBundle(documentBundle, observation,
+								"urn:uuid:" + UUID.randomUUID().toString());
+						// Add result to diagnoticReport if exists.
+						if (diagnosticReport != null) {
+							diagnosticReport.addResult(observationReference);
+						}
 					}
 				}
 
 				// Add Specimen - 2.3 DOES NOT SUPPORT SPECIMEN
 			}
-			bundles.add(bundle);
+			bundles.add(messageBundle);
 		}
 
 		return bundles;
+
 	}
 
 	private Patient mapPatients(ORU_R01_RESPONSE response) {
@@ -213,7 +359,7 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 			if (pid2 != null && !pid2.isEmpty()) {
 				ST id = pid2.getCx1_ID();
 				if (id != null && !id.isEmpty()) {
-//					patient.setId(id.getValue());
+					// patient.setId(id.getValue());
 					Identifier identifier = new Identifier();
 					identifier.setSystem("External_Patient_ID");
 					identifier.setValue(id.getValue());
@@ -299,19 +445,22 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 				}
 				patient.setGender(adminstrativeGender);
 			}
-			
+
 			// PID-10 Race
 			IS racePid10 = pid.getPid10_Race();
 			if (!racePid10.isEmpty()) {
 				Extension raceExt = new Extension();
 				raceExt.setUrl("urn:mmg:cdc-race");
-				
+
 				String textValue = racePid10.getValue();
 				Extension raceTextExt = new Extension();
 				raceTextExt.setUrl("text");
 				raceTextExt.setValue(new StringType(textValue));
+				raceExt.addExtension(raceTextExt);
+
+				patient.addExtension(raceExt);
 			}
-			
+
 			// PID-11: Address
 			int totalNumOfAddresses = pid.getPid11_PatientAddressReps();
 			for (int i = 0; i < totalNumOfAddresses; i++) {
@@ -324,17 +473,19 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 			}
 
 			// PID-22 Ethnicity
-				// FHIR can handle only one Race.
+			// FHIR can handle only one Race.
 			IS ethnicPid22 = pid.getPid22_EthnicGroup();
 			if (!ethnicPid22.isEmpty()) {
 				Extension ethnicExt = new Extension();
 				ethnicExt.setUrl("urn:mmg:cdc-ethnicity");
-								
+
 				String textValue = ethnicPid22.getValue();
 				Extension ethnicTextExt = new Extension();
 				ethnicTextExt.setUrl("text");
 				ethnicTextExt.setValue(new StringType(textValue));
 				ethnicExt.addExtension(ethnicTextExt);
+
+				patient.addExtension(ethnicExt);
 			}
 
 		} catch (HL7Exception e) {
@@ -385,6 +536,15 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 		OBR obr = orderObservation.getOBR();
 
 		try {
+			if (obr.isEmpty()) {
+				// if we have nothing in OBR, then we return null.
+				return null;
+			}
+
+			// Set the patient.
+			Reference patientReference = new Reference(subjectReference);
+			diagnosticReport.setSubject(patientReference);
+
 			// OBR 2: Placer Order Number
 			EI obr_2 = obr.getObr2_PlacerOrderNumber(0);
 			if (!obr_2.isEmpty()) {
@@ -433,26 +593,27 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 
 			// OBR-22: Results Rpt/Status Chng - Date/Time
 			if (!obr.getObr22_ResultsRptStatusChngDateTime().isEmpty()) {
-				obr.getObr22_ResultsRptStatusChngDateTime();
+				diagnosticReport
+						.setIssued(obr.getObr22_ResultsRptStatusChngDateTime().getTs1_TimeOfAnEvent().getValueAsDate());
 			}
 
 			// OBR-25: Result Status. In MMG Lab, The status of results for this order
 			if (!obr.getObr25_ResultStatus().isEmpty()) {
 				switch (obr.getObr25_ResultStatus().getValue()) {
-				case "F":
-					diagnosticReport.setStatus(DiagnosticReportStatus.FINAL);
-					break;
-				case "A":
-					diagnosticReport.setStatus(DiagnosticReportStatus.PARTIAL);
-					break;
-				case "P":
-					diagnosticReport.setStatus(DiagnosticReportStatus.PRELIMINARY);
-					break;
-				case "C":
-					diagnosticReport.setStatus(DiagnosticReportStatus.CORRECTED);
-					break;
-				default:
-					diagnosticReport.setStatus(DiagnosticReportStatus.FINAL);
+					case "F":
+						diagnosticReport.setStatus(DiagnosticReportStatus.FINAL);
+						break;
+					case "A":
+						diagnosticReport.setStatus(DiagnosticReportStatus.PARTIAL);
+						break;
+					case "P":
+						diagnosticReport.setStatus(DiagnosticReportStatus.PRELIMINARY);
+						break;
+					case "C":
+						diagnosticReport.setStatus(DiagnosticReportStatus.CORRECTED);
+						break;
+					default:
+						diagnosticReport.setStatus(DiagnosticReportStatus.FINAL);
 				}
 			}
 
@@ -470,35 +631,57 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 		return diagnosticReport;
 	}
 
-	public List<Observation> mapObservations(ORU_R01_ORDER_OBSERVATION orderObservation, String subjectReference, Bundle bundle) {
+	private Quantity setUnitQuantity(Quantity quantity, String system, String code, String unit) {
+		if (quantity == null) {
+			quantity = new Quantity();
+		}
+
+		if (system != null && !system.isEmpty()) {
+			quantity.setSystem(V2FHIRCodeSystem.getFhirFromV2(system));
+		}
+
+		if (unit != null && !unit.isEmpty()) {
+			quantity.setUnit(unit);
+		}
+
+		if (code != null && !code.isEmpty()) {
+			quantity.setCode(code);
+		}
+
+		return quantity;
+	}
+
+	public List<Observation> mapObservations(ORU_R01_ORDER_OBSERVATION orderObservation, String subjectReference,
+			Bundle bundle) {
 		// Mapping Document:
 		// https://confluence.icl.gtri.org/pages/viewpage.action?pageId=22678246#NMStoFHIR(HL7v2.3toFHIR)-ForensicFormatHL7v2.3Specification
 
 		List<Observation> retVal = new ArrayList<Observation>();
 
 		try {
-			OBR obr = orderObservation.getOBR();
+			// OBR obr = orderObservation.getOBR();
 
-			CE obr4 = obr.getObr4_UniversalServiceIdentifier();
-			String serviceDesc = null;
-			if (obr4 != null && !obr4.isEmpty()) {
-				ST serviceDescST = obr4.getCe2_Text();
-				if (serviceDescST != null && !serviceDescST.isEmpty()) {
-					serviceDesc = serviceDescST.getValue();
-				}
-			}
+			// CE obr4 = obr.getObr4_UniversalServiceIdentifier();
+			// String serviceDesc = null;
+			// if (obr4 != null && !obr4.isEmpty()) {
+			// ST serviceDescST = obr4.getCe2_Text();
+			// if (serviceDescST != null && !serviceDescST.isEmpty()) {
+			// serviceDesc = serviceDescST.getValue();
+			// }
+			// }
 
 			int totalNumberOfObservation = orderObservation.getOBSERVATIONReps();
 			for (int i = 0; i < totalNumberOfObservation; i++) {
 				Observation observation = new Observation();
 
-				if (serviceDesc != null) {
-					Identifier identifier = new Identifier();
-					identifier.setValue(serviceDesc);
-					observation.addIdentifier(identifier);
-				}
+				// if (serviceDesc != null) {
+				// Identifier identifier = new Identifier();
+				// identifier.setValue(serviceDesc);
+				// observation.addIdentifier(identifier);
+				// }
 
 				CodeableConcept typeConcept = new CodeableConcept();
+
 				// This is Lab result
 				Coding typeCoding = new Coding("http://hl7.org/fhir/observation-category", "laboratory", "");
 				typeConcept.addCoding(typeCoding);
@@ -507,7 +690,7 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 				ORU_R01_OBSERVATION hl7Observation = orderObservation.getOBSERVATION(i);
 
 				// Set the subject from the patient ID.
-//				IdType IdType = new IdType("Patient", subject.getId());
+				// IdType IdType = new IdType("Patient", subject.getId());
 				Reference reference = new Reference(subjectReference);
 				observation.setSubject(reference);
 
@@ -522,11 +705,14 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 				// OBX-4: Observation Sub-ID. In MMG lab, Distinguishes
 				// between multiple OBX segments with the same observation ID organized
 				// under one OBR.
-				// Note by GTRI: All OBX will be added to the result section of diagnostic
-				// report.
-				// There will be no issue with Observation ID in FHIR as it will assigned
-				// with unique one by FHIR server. Thus, keeping this in the result of
-				// diagnostic report should be sufficient.
+				// In MMG this is a sub-id for multipble OBXes.
+				ST obx4 = obx.getObx4_ObservationSubID();
+				if (!obx4.isEmpty()) {
+					Extension subIdExt = new Extension();
+					subIdExt.setUrl("ext-sub-id");
+					subIdExt.setValue(new StringType(obx4.getValue()));
+					observation.addExtension(subIdExt);
+				}
 
 				// OBX-6: Units. If we have OBX-6 value, it means the value is Quantity.
 				// However, value type will choose the FHIR data type. We just parse
@@ -636,18 +822,18 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 						DT dtValue = (DT) observationValue.getData();
 
 						obsValue = new StringType(dtValue.getValue());
-					} else if (valueType.getValue().equals("ED")) {  
+					} else if (valueType.getValue().equals("ED")) {
 						ED edValue = (ED) observationValue.getData();
-						
+
 						ID dataType = edValue.getEd2_TypeOfData();
 						ID encodingType = edValue.getEd4_Encoding();
 						ST data = edValue.getEd5_Data();
-						
+
 						Attachment attachment = new Attachment();
 						if (!dataType.isEmpty()) {
 							attachment.setContentType(dataType.getValue());
 						}
-						
+
 						if (!encodingType.isEmpty()) {
 							if ("Base64".equalsIgnoreCase(encodingType.getValue())) {
 								if (!data.isEmpty()) {
@@ -655,7 +841,7 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 								}
 							}
 						}
-						
+
 						if (!attachment.isEmpty()) {
 							Extension edExt = new Extension();
 							edExt.setUrl("http://hl7.org/StructureDefinition/ext-valueAttachment");
@@ -663,7 +849,7 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 							observation.addExtension(edExt);
 						}
 						addFhirValue = false;
-						
+
 					} else if (valueType.getValue().equals("CX")) {
 						// CX maps to identifier. CX does not have enough information to create
 						// organization. So, we consider this as a system in the identifier.
@@ -673,11 +859,11 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 						if (!cx1IdNum.isEmpty()) {
 							identifier.setValue(cx1IdNum.getValue());
 						}
-						
+
 						ST cx2CheckDigit = cxValue.getCx2_CheckDigit();
 						if (!cx2CheckDigit.isEmpty()) {
 							Extension ext = new Extension();
-							ext.setUrl("http://hl7.org/StructureDefinition/ext-checkDigit");
+							ext.setUrl("ext-checkDigit");
 							ext.setValue(new StringType(cx2CheckDigit.getValue()));
 							identifier.addExtension(ext);
 						}
@@ -685,7 +871,7 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 						ID cx3CheckDigistScheme = cxValue.getCx3_CodeIdentifyingTheCheckDigitSchemeEmployed();
 						if (!cx3CheckDigistScheme.isEmpty()) {
 							Extension ext = new Extension();
-							ext.setUrl("http://hl7.org/StructureDefinition/ext-checkDigit");
+							ext.setUrl("checkDigit");
 							ext.setValue(new StringType(cx3CheckDigistScheme.getValue()));
 							identifier.addExtension(ext);
 						}
@@ -694,7 +880,7 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 						if (!cx4AssignAuth.isEmpty()) {
 							identifier.setSystemElement(getUriFromHD(cx4AssignAuth));
 						}
-						
+
 						IS cx5IdTypeCode = cxValue.getCx5_IdentifierTypeCode();
 						if (!cx5IdTypeCode.isEmpty()) {
 							CodeableConcept cx5CodeableConcept = new CodeableConcept();
@@ -702,18 +888,18 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 							cx5TypeCoding.setCode(cx5IdTypeCode.getValue());
 							identifier.setType(cx5CodeableConcept);
 						}
-						
+
 						HD cx6AssignFac = cxValue.getCx6_AssigningFacility();
 						if (cx6AssignFac.isEmpty()) {
 							Location location = getLocationFromHD(cx6AssignFac);
 							String locationRefId = "urn:uuid:" + UUID.randomUUID().toString();
-							Reference locationRef = addToMessageBundle(bundle, location, locationRefId);
+							Reference locationRef = addToBundle(bundle, location, locationRefId);
 							Extension ext = new Extension();
-							ext.setUrl("http://hl7.org/StructureDefinition/ext-assigningFacility");
+							ext.setUrl("ext-assigningFacility");
 							ext.setValue(locationRef);
 							identifier.addExtension(ext);
 						}
-																		
+
 						addFhirValue = false;
 					} else { // ST and TX - we treat both ST and TX as String
 						StringType valueString = null;
@@ -784,7 +970,6 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 								new Coding("urn:oid:2.16.840.1.113883.12.78", abnormalFlag.getValue(), "")));
 					}
 				}
-				observation.addInterpretation(codeableConcept);
 
 				// observation.status from OBX-11
 				ID obx11 = obx.getObx11_ObservResultStatus();
@@ -812,7 +997,8 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 				// segment for ELR infers
 				// the specimen collection date
 				TS observationDateTime = obx.getObx14_DateTimeOfTheObservation();
-				DateTimeType dateTimeType = new DateTimeType(observationDateTime.getTs1_TimeOfAnEvent().getValueAsDate());
+				DateTimeType dateTimeType = new DateTimeType(
+						observationDateTime.getTs1_TimeOfAnEvent().getValueAsDate());
 				observation.setEffective(dateTimeType);
 
 				// OBX-17: Observation Method. In MMG lab, The technique or method used to
@@ -864,7 +1050,7 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 
 					}
 				}
-				
+
 				if (annotations != null && !annotations.isEmpty()) {
 					observation.setNote(annotations);
 				}
@@ -953,20 +1139,20 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 			ID use = xcn.getXcn10_NameType();
 			if (!use.isEmpty()) {
 				switch (use.getValue()) {
-				case "L":
-					name.setUse(NameUse.OFFICIAL);
-					break;
-				case "M":
-					name.setUse(NameUse.MAIDEN);
-					break;
-				case "N":
-					name.setUse(NameUse.NICKNAME);
-					break;
-				case "S":
-					name.setUse(NameUse.ANONYMOUS);
-					break;
-				default:
-					name.setUse(NameUse.USUAL);
+					case "L":
+						name.setUse(NameUse.OFFICIAL);
+						break;
+					case "M":
+						name.setUse(NameUse.MAIDEN);
+						break;
+					case "N":
+						name.setUse(NameUse.NICKNAME);
+						break;
+					case "S":
+						name.setUse(NameUse.ANONYMOUS);
+						break;
+					default:
+						name.setUse(NameUse.USUAL);
 				}
 			}
 
@@ -978,7 +1164,7 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 			// the test
 			if (!xcn.getXcn9_AssigningAuthority().isEmpty()) {
 				identifier.addExtension(getExtensionFromHD(xcn.getXcn9_AssigningAuthority(),
-						"http://hl7.org/StructureDefinition/ext-assigningauthority"));
+						"ext-assigningauthority"));
 			}
 
 			// xcn.13: Identifier Type Code.
@@ -991,7 +1177,7 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 			// xcn.14: Assigning Facility.
 			if (!xcn.getXcn14_AssigningFacilityID().isEmpty()) {
 				identifier.addExtension(getExtensionFromHD(xcn.getXcn14_AssigningFacilityID(),
-						"http://hl7.org/StructureDefinition/ext-assigningFacility"));
+						"ext-assigningFacility"));
 			}
 
 			// xcn.21: Professional Suffix.
@@ -1002,7 +1188,7 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 
 		return practitioner;
 	}
-	
+
 	private Address getAddressFromXAD(XAD xad) {
 		Address address = new Address();
 		ST streetXad1 = xad.getXad1_StreetAddress();
@@ -1011,42 +1197,42 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 		ST zipXad5 = xad.getXad5_ZipOrPostalCode();
 		ID countryXad6 = xad.getXad6_Country();
 		IS censusTractXad10 = xad.getXad10_CensusTract();
-		
+
 		try {
 			if (!streetXad1.isEmpty()) {
 				address.addLine(streetXad1.getValue());
 			}
-			
+
 			if (!cityXad3.isEmpty()) {
 				address.setCity(cityXad3.getValue());
 			}
-			
+
 			if (!stateXad4.isEmpty()) {
 				address.setState(stateXad4.getValue());
 			}
-			
+
 			if (!zipXad5.isEmpty()) {
 				address.setPostalCode(zipXad5.getValue());
 			}
-			
+
 			if (!countryXad6.isEmpty()) {
 				address.setCountry(countryXad6.getValue());
 			}
-			
+
 			if (!censusTractXad10.isEmpty()) {
 				Extension censusTractExt = new Extension();
 				censusTractExt.setUrl("urn:mmg:census-tract");
 				censusTractExt.setValue(new StringType(censusTractXad10.getValue()));
 				address.addExtension(censusTractExt);
 			}
-			
+
 		} catch (HL7Exception e) {
 			e.printStackTrace();
 		}
-		
+
 		return address;
 	}
-	
+
 	private Location getLocationFromHD(HD hD) {
 		Location location = new Location();
 		try {
@@ -1054,27 +1240,27 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 				IS hd_1 = hD.getHd1_NamespaceID();
 				ST hd_2 = hD.getHd2_UniversalID();
 				ID hd_3 = hD.getHd3_UniversalIDType();
-				
+
 				if (!hd_1.isEmpty()) {
 					location.setName(hd_1.getValue());
 				}
-				
+
 				if (!hd_2.isEmpty()) {
 					Identifier locationIdentifier = new Identifier();
 					if ("ISO".equals(hd_3.getValue())) {
 						locationIdentifier.setValue("urn:oid:" + hd_2.getValue());
 					} else if ("UUID".equals(hd_3.getValue())) {
-						locationIdentifier.setValue("urn:uuid:" + hd_2.getValue());						
+						locationIdentifier.setValue("urn:uuid:" + hd_2.getValue());
 					} else {
-						CodeableConcept phyCodeableConcept = location.getPhysicalType(); 
+						CodeableConcept phyCodeableConcept = location.getPhysicalType();
 						Coding phyCoding = phyCodeableConcept.getCodingFirstRep();
 						phyCoding.setCode("si");
 						phyCoding.setSystem("http://terminology.hl7.org/CodeSystem/location-physical-type");
 						location.setPhysicalType(phyCodeableConcept);
 
-						locationIdentifier.setValue(hd_2.getValue());						
+						locationIdentifier.setValue(hd_2.getValue());
 					}
-					
+
 					if (!locationIdentifier.isEmpty()) {
 						location.addIdentifier(locationIdentifier);
 					}
@@ -1082,14 +1268,14 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 			}
 		} catch (HL7Exception e) {
 			e.printStackTrace();
-		}	
-		
+		}
+
 		return location;
 	}
-	
+
 	private UriType getUriFromHD(HD hD) {
 		UriType uriType = new UriType();
-		
+
 		try {
 			if (!hD.isEmpty()) {
 				IS hd_1 = hD.getHd1_NamespaceID();
@@ -1113,10 +1299,9 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 				}
 			}
 		} catch (HL7Exception e) {
-			// TODO Auto-generated catch block
 			e.printStackTrace();
 		}
-		
+
 		return uriType;
 	}
 
@@ -1133,21 +1318,21 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 
 				if (!hd_1.isEmpty()) {
 					Extension extension_1 = new Extension();
-					extension_1.setUrl("nameSpaceID");
+					extension_1.setUrl("urn:mmg:nameSpaceID");
 					extension_1.setValue(new StringType(hd_1.getValue()));
 					extension.addExtension(extension_1);
 				}
 
 				if (!hd_2.isEmpty()) {
 					Extension extension_1 = new Extension();
-					extension_1.setUrl("universalID");
+					extension_1.setUrl("urn:mmg:universalID");
 					extension_1.setValue(new StringType(hd_2.getValue()));
 					extension.addExtension(extension_1);
 				}
 
 				if (!hd_3.isEmpty()) {
 					Extension extension_1 = new Extension();
-					extension_1.setUrl("universalIDType");
+					extension_1.setUrl("urn:mmg:universalIDType");
 					extension_1.setValue(new StringType(hd_3.getValue()));
 					extension.addExtension(extension_1);
 				}
@@ -1183,27 +1368,27 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 				Extension eIExtension = new Extension();
 				if (eI_2 != null && !eI_2.isEmpty()) {
 					Extension eI_2_extension = new Extension();
-					eI_2_extension.setUrl("nameSpaceID");
+					eI_2_extension.setUrl("urn:mmg:nameSpaceID");
 					eI_2_extension.setValue(new StringType(eI_2.getValue()));
 					eIExtension.addExtension(eI_2_extension);
 				}
 
 				if (eI_3 != null && !eI_3.isEmpty()) {
 					Extension eI_3_extension = new Extension();
-					eI_3_extension.setUrl("universalID");
+					eI_3_extension.setUrl("urn:mmg:universalID");
 					eI_3_extension.setValue(new StringType(eI_3.getValue()));
 					eIExtension.addExtension(eI_3_extension);
 				}
 
 				if (eI_4 != null && !eI_4.isEmpty()) {
 					Extension eI_4_extension = new Extension();
-					eI_4_extension.setUrl("universalIDType");
+					eI_4_extension.setUrl("urn:mmg:universalIDType");
 					eI_4_extension.setValue(new CodeType(eI_4.getValue()));
 					eIExtension.addExtension(eI_4_extension);
 				}
 
 				if (!eIExtension.isEmpty()) {
-					eIExtension.setUrl("http://hl7.org/StructureDefinition/ext-assigningauthority");
+					eIExtension.setUrl("ext-assigningauthority");
 
 					identifier.addExtension(eIExtension);
 				}
@@ -1314,7 +1499,7 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 			messageHeader = new MessageHeader();
 
 		HD sendingFacility = msh.getSendingFacility();
-//		HD receivingFacility = msh.getReceivingFacility();
+		// HD receivingFacility = msh.getReceivingFacility();
 		try {
 			if (!sendingFacility.isEmpty()) {
 				IS sendingFacilityName = sendingFacility.getHd1_NamespaceID();
@@ -1337,7 +1522,7 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 						eventCoding.setCode(ObservationCategory.LABORATORY.toCode());
 						eventCoding.setDisplay(ObservationCategory.LABORATORY.getDisplay());
 					} else {
-						eventCoding.setCode(msh9_1.getValue()+"_"+msh9_2.getValue());
+						eventCoding.setCode(msh9_1.getValue() + "_" + msh9_2.getValue());
 					}
 				}
 			}
@@ -1373,23 +1558,24 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 			}
 
 			// messageHeader.timestamp from MSH-7
-//			TS msh7 = msh.getMsh7_DateTimeOfMessage();
-//			if (msh7 != null && !msh7.isEmpty()) {
-//				TSComponentOne timeOfEvent = msh7.getTs1_TimeOfAnEvent();
-//				if (timeOfEvent != null && !timeOfEvent.isEmpty()) {
-//					messageHeader.setTimestamp(timeOfEvent.getValueAsDate());
-//				}
-//			}
+			// TS msh7 = msh.getMsh7_DateTimeOfMessage();
+			// if (msh7 != null && !msh7.isEmpty()) {
+			// TSComponentOne timeOfEvent = msh7.getTs1_TimeOfAnEvent();
+			// if (timeOfEvent != null && !timeOfEvent.isEmpty()) {
+			// messageHeader.setTimestamp(timeOfEvent.getValueAsDate());
+			// }
+			// }
 
 			// messageHeader.source from MSH-3
 			HD msh3 = msh.getMsh3_SendingApplication();
-			String sourceDestination = getValueOfHD(msh3);
-			if (sourceDestination != null && !sourceDestination.isEmpty()) {
-				MessageSourceComponent messageSource = new MessageSourceComponent();
-				messageSource.setEndpoint(sourceDestination);
-				messageHeader.setSource(messageSource);
+			if (!msh3.isEmpty()) {
+				String sourceDestination = getValueOfHD(msh3);
+				if (sourceDestination != null && !sourceDestination.isEmpty()) {
+					MessageSourceComponent messageSource = new MessageSourceComponent();
+					messageSource.setEndpoint(sourceDestination);
+					messageHeader.setSource(messageSource);
+				}
 			}
-
 		} catch (HL7Exception e) {
 			e.printStackTrace();
 			return null;
@@ -1398,8 +1584,60 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 		return messageHeader;
 	}
 
+	public Composition mapComposition(ca.uhn.hl7v2.model.v23.message.ORU_R01 oruR01message) {
+		MSH msh = oruR01message.getMSH();
+		if (composition == null)
+			composition = new Composition();
+
+		composition.setStatus(CompositionStatus.FINAL);
+
+		try {
+			// messageheader.event from MSH9.2. MSH9.2 is triggering event.
+			// For ELR, it's R01. We need to map this to FHIR message-event, which
+			// can be observation-provide.
+			CodeableConcept typeCodeable = composition.getType();
+			Coding typeCoding = new Coding();
+			CM_MSG msh9 = msh.getMsh9_MessageType();
+
+			if (msh9 != null && !msh9.isEmpty()) {
+				// Object msh9_1 = msh9.getMsg1_MessageCode();
+				ID msh9_1 = msh9.getCm_msg1_MessageType();
+				ID msh9_2 = msh9.getCm_msg2_TriggerEvent();
+				if (!msh9_1.isEmpty() && !msh9_2.isEmpty()) {
+					if ("ORU".equals(msh9_1.getValue()) && "R01".equals(msh9_2.getValue())) {
+						typeCoding.setSystem("http://loinc.org");
+						typeCoding.setCode("11502-2");
+						typeCoding.setDisplay("Laboratory report");
+					} else {
+						typeCoding.setDisplay("NOT AVAILABLE");
+					}
+				}
+			}
+
+			if (typeCoding.isEmpty()) {
+				// We couldn't get any info from triggering event. Just set this to our default
+				// R01 event mapping.
+				typeCoding.setSystem("http://loinc.org");
+				typeCoding.setCode("11502-2");
+				typeCoding.setDisplay("Laboratory report");
+			}
+
+			typeCodeable.addCoding(typeCoding);
+
+		} catch (HL7Exception e) {
+			e.printStackTrace();
+			return null;
+		}
+
+		return composition;
+	}
+
 	public MessageHeader getMessageHeader() {
 		return null;
+	}
+
+	public Composition getComposition() {
+		return composition;
 	}
 
 }
