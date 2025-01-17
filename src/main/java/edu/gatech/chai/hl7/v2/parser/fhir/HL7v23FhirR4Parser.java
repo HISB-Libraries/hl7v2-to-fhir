@@ -745,7 +745,7 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 				for (int j = 0; j < totalNumOfObx5; j++) {
 					Type obsValue = null;
 					boolean addFhirValue = true;
-					Varies observationValue = obx.getObx5_ObservationValue(0);
+					Varies observationValue = obx.getObx5_ObservationValue(j);
 					if (valueType.getValue().equals("NM")) {
 						// This should be valueQuantity
 						// obx5 is the ST value in NMS message
@@ -996,10 +996,17 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 				// OBX-14: Specimen Collection Date. In MMG lab, Date/time of observation in OBX
 				// segment for ELR infers
 				// the specimen collection date
-				TS observationDateTime = obx.getObx14_DateTimeOfTheObservation();
-				DateTimeType dateTimeType = new DateTimeType(
-						observationDateTime.getTs1_TimeOfAnEvent().getValueAsDate());
-				observation.setEffective(dateTimeType);
+				try {
+					TS observationDateTime = obx.getObx14_DateTimeOfTheObservation();
+					DateTimeType dateTimeType = new DateTimeType(
+							observationDateTime.getTs1_TimeOfAnEvent().getValueAsDate());
+					observation.setEffective(dateTimeType);
+				} catch (DataTypeException e) {
+					e.printStackTrace();
+					// we have an error In this case, we have no Effective time.
+					// However, it's required in Registry. So, we put new Date(0).
+					observation.setEffective(new DateTimeType(new Date(0L)));
+				}
 
 				// OBX-17: Observation Method. In MMG lab, The technique or method used to
 				// perform the test and

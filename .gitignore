@@ -146,3 +146,5 @@ local.properties
 .texlipse
 
 .vscode/
+
+.fake
