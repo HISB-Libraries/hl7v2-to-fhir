@@ -72,6 +72,7 @@ import ca.uhn.hl7v2.model.v23.datatype.IS;
 import ca.uhn.hl7v2.model.v23.datatype.NM;
 import ca.uhn.hl7v2.model.v23.datatype.ST;
 import ca.uhn.hl7v2.model.v23.datatype.TS;
+import ca.uhn.hl7v2.model.v23.datatype.TSComponentOne;
 import ca.uhn.hl7v2.model.v23.datatype.TX;
 import ca.uhn.hl7v2.model.v23.group.ORU_R01_OBSERVATION;
 import ca.uhn.hl7v2.model.v23.group.ORU_R01_ORDER_OBSERVATION;
@@ -96,6 +97,7 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 
 	MessageHeader messageHeader = null;
 	Composition composition = null;
+	Date dateOfMessage = new Date(0L);
 
 	List<Resource> resources;
 
@@ -996,16 +998,21 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 				// OBX-14: Specimen Collection Date. In MMG lab, Date/time of observation in OBX
 				// segment for ELR infers
 				// the specimen collection date
+				DateTimeType dateTimeType = null;
 				try {
 					TS observationDateTime = obx.getObx14_DateTimeOfTheObservation();
-					DateTimeType dateTimeType = new DateTimeType(
-							observationDateTime.getTs1_TimeOfAnEvent().getValueAsDate());
-					observation.setEffective(dateTimeType);
+					if (observationDateTime != null && !observationDateTime.isEmpty()) {
+						dateTimeType = new DateTimeType(observationDateTime.getTs1_TimeOfAnEvent().getValueAsDate());
+						observation.setEffective(dateTimeType);
+					}
 				} catch (DataTypeException e) {
 					e.printStackTrace();
-					// we have an error In this case, we have no Effective time.
-					// However, it's required in Registry. So, we put new Date(0).
-					observation.setEffective(new DateTimeType(new Date(0L)));
+				} finally {
+					if (dateTimeType == null) {
+						// for whatever reason, we got no date time. So, set it to 
+						// date of message or Date(0L)
+						observation.setEffective(new DateTimeType(dateOfMessage));
+					}
 				}
 
 				// OBX-17: Observation Method. In MMG lab, The technique or method used to
@@ -1564,14 +1571,14 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 				messageHeader.addDestination(messageDestination);
 			}
 
-			// messageHeader.timestamp from MSH-7
-			// TS msh7 = msh.getMsh7_DateTimeOfMessage();
-			// if (msh7 != null && !msh7.isEmpty()) {
-			// TSComponentOne timeOfEvent = msh7.getTs1_TimeOfAnEvent();
-			// if (timeOfEvent != null && !timeOfEvent.isEmpty()) {
-			// messageHeader.setTimestamp(timeOfEvent.getValueAsDate());
-			// }
-			// }
+			// Timestamp from MSH-7
+			TS msh7 = msh.getMsh7_DateTimeOfMessage();
+			if (msh7 != null && !msh7.isEmpty()) {
+				TSComponentOne timeOfEvent = msh7.getTs1_TimeOfAnEvent();
+				if (timeOfEvent != null && !timeOfEvent.isEmpty()) {
+					dateOfMessage = timeOfEvent.getValueAsDate();
+				}
+			}
 
 			// messageHeader.source from MSH-3
 			HD msh3 = msh.getMsh3_SendingApplication();
