@@ -8,7 +8,7 @@
 	<artifactId>hl7v2-to-fhir</artifactId>
 
 	<packaging>jar</packaging>
-	<version>1.2.1</version>
+	<version>1.2.2</version>
 
 	<name>hl7v2-to-fhir</name>
 	<description>HL7v2 to FHIR conversion library</description>

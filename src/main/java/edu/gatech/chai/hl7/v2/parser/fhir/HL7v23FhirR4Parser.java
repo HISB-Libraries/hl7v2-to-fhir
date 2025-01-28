@@ -661,7 +661,7 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 		List<Observation> retVal = new ArrayList<Observation>();
 
 		try {
-			// OBR obr = orderObservation.getOBR();
+			OBR obr = orderObservation.getOBR();
 
 			// CE obr4 = obr.getObr4_UniversalServiceIdentifier();
 			// String serviceDesc = null;
@@ -671,6 +671,12 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 			// serviceDesc = serviceDescST.getValue();
 			// }
 			// }
+
+			DateTimeType dateTimeTypeResultRptStatusChng = null;
+			TS obr22ResultRptStatusChngDateTime = obr.getObr22_ResultsRptStatusChngDateTime();
+			if (obr22ResultRptStatusChngDateTime != null && !obr22ResultRptStatusChngDateTime.isEmpty()) {
+				dateTimeTypeResultRptStatusChng = new DateTimeType(obr22ResultRptStatusChngDateTime.getTs1_TimeOfAnEvent().getValueAsDate());
+			}
 
 			int totalNumberOfObservation = orderObservation.getOBSERVATIONReps();
 			for (int i = 0; i < totalNumberOfObservation; i++) {
@@ -995,7 +1001,7 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 					}
 				}
 
-				// OBX-14: Specimen Collection Date. In MMG lab, Date/time of observation in OBX
+				// OBX-14: Observation Date/Time. In MMG lab, Date/time of observation in OBX
 				// segment for ELR infers
 				// the specimen collection date
 				DateTimeType dateTimeType = null;
@@ -1010,8 +1016,13 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 				} finally {
 					if (dateTimeType == null) {
 						// for whatever reason, we got no date time. So, set it to 
-						// date of message or Date(0L)
-						observation.setEffective(new DateTimeType(dateOfMessage));
+						// date of OBR-22 or Date(0L)
+						if (dateTimeTypeResultRptStatusChng != null && !dateTimeTypeResultRptStatusChng.isEmpty()) {
+							LOGGER.warning("OBR-22 was used for the observeration.effectiveDateTime (" + dateTimeTypeResultRptStatusChng.asStringValue() + ") - Grady heck.");
+							observation.setEffective(dateTimeTypeResultRptStatusChng);
+						} else {
+							observation.setEffective(new DateTimeType(new Date(0L)));
+						}
 					}
 				}
 
