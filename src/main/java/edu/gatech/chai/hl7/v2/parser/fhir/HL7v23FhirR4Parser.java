@@ -800,8 +800,8 @@ public class HL7v23FhirR4Parser extends BaseHL7v2FHIRParser {
 						ST separatorSuffix = snValue.getSeparatorOrSuffix();
 
 						if (!comparator.isEmpty()) {
-							quantity1.setComparator(QuantityComparator.valueOf(comparator.getValue()));
-							quantity2.setComparator(QuantityComparator.valueOf(comparator.getValue()));
+							quantity1.setComparator(QuantityComparator.fromCode(comparator.getValue()));
+							quantity2.setComparator(QuantityComparator.fromCode(comparator.getValue()));
 						}
 						if (":".equals(separatorSuffix.getValue()) || "/".equals(separatorSuffix.getValue())) {
 							// valueRatio
